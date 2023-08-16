@@ -13,17 +13,19 @@ impl<'a> Tokenizer<'a> {
         &mut self,
         additional_allowed_char: Option<char>,
         as_attribute: bool,
-    ) -> Option<String> {
-        // self.clear_consume_buffer();
-
+    ) -> Result<(), ()> {
         if as_attribute {
             // When we are inside an attribute context, things (will/might) be different. Not sure how yet.
         }
 
+        // Note that at this point we have a unconsumed '&' which may or may not be consumed.
+
         let c = match self.stream.read_char() {
             Some(c) => c,
             None => {
-                return None;
+                // First char we read is eof, this means we only have to return the &
+                self.consume('&');
+                return Err(());
             }
         };
 
@@ -44,33 +46,33 @@ impl<'a> Tokenizer<'a> {
 
         if chars.contains(&c) {
             self.stream.unread();
-            return None;
+            return Err(());
         }
 
         // Consume a number when we found &#
         if c == '#' {
-            self.consume('&');
-            self.consume(c);
+            // self.consume('&');
+            // self.consume(c);
             if self.consume_number().is_err() {
                 self.stream.unread();
-                return None;
+                return Err(());
             }
 
-            return Some(self.get_consumed_str());
+            return Ok(());
         }
 
         // Consume anything else when we found & with another char after (ie: &raquo;)
         self.stream.unread();
         if self.consume_entity(as_attribute).is_err() {
             self.stream.unread();
-            return None;
+            return Err(());
         }
 
-        return Some(self.get_consumed_str());
+        return Ok(());
     }
 
     // Consume a number like #x1234, #123 etc
-    fn consume_number(&mut self) -> Result<String, String> {
+    fn consume_number(&mut self) -> Result<(), ()> {
         let mut str_num = String::new();
 
         // Save current position for easy recovery
@@ -81,7 +83,7 @@ impl<'a> Tokenizer<'a> {
         let hex = match self.stream.look_ahead(0) {
             Some(hex) => hex,
             None => {
-                return Err(String::new());
+                return Err(());
             }
         };
 
@@ -89,15 +91,13 @@ impl<'a> Tokenizer<'a> {
             is_hex = true;
 
             // Consume the 'x' character
-            let c = match self.stream.read_char() {
+            let _c = match self.stream.read_char() {
                 Some(c) => c,
                 None => {
                     self.stream.seek(cp);
-                    return Err(String::new());
+                    return Err(());
                 }
             };
-
-            self.consume(c);
         };
 
         let mut i = 0;
@@ -106,16 +106,16 @@ impl<'a> Tokenizer<'a> {
                 Some(c) => c,
                 None => {
                     self.stream.seek(cp);
-                    return Err(String::new());
+                    return Err(());
                 }
             };
 
             if is_hex && c.is_ascii_hexdigit() {
                 str_num.push(c);
-                self.consume(c);
+                // self.consume(c);
             } else if !is_hex && c.is_ascii_digit() {
                 str_num.push(c);
-                self.consume(c);
+                // self.consume(c);
             } else {
                 self.stream.unread();
                 break;
@@ -129,7 +129,7 @@ impl<'a> Tokenizer<'a> {
             Some(c) => c,
             None => {
                 self.stream.seek(cp);
-                return Err(String::new());
+                return Err(());
             }
         };
 
@@ -137,16 +137,17 @@ impl<'a> Tokenizer<'a> {
         if c != ';' {
             self.parse_error("expected a ';'");
             self.stream.seek(cp);
-            return Err(String::new());
+            return Err(());
         }
 
-        self.consume(c);
+        // self.consume(c);
 
         // If we found ;. we need to check how many digits we have parsed. It needs to be at least 1,
         if i == 0 {
             self.parse_error("didn't expect #;");
             self.stream.seek(cp);
-            return Err(String::new());
+            self.consume('&');
+            return Err(());
         }
 
         // check if we need to replace the character. First convert the number to a uint, and use that
@@ -157,30 +158,26 @@ impl<'a> Tokenizer<'a> {
         };
 
         if TOKEN_REPLACEMENTS.contains_key(&num) {
-            // self.clear_consume_buffer();
             self.consume(*TOKEN_REPLACEMENTS.get(&num).unwrap());
-            return Ok(String::new());
+            return Ok(());
         }
 
         // Next, check if we are in the 0xD800..0xDFFF or 0x10FFFF range, if so, replace
         if (num > 0xD800 && num < 0xDFFF) || (num > 0x10FFFFF) {
             self.parse_error("within reserved codepoint range, but replaced");
-            // self.clear_consume_buffer();
             self.consume(crate::html5_parser::tokenizer::CHAR_REPLACEMENT);
-            return Ok(String::new());
+            return Ok(());
         }
 
         // Check if it's in a reserved range, in that case, we ignore the data
         if self.in_reserved_number_range(num) {
             self.parse_error("within reserved codepoint range, ignored");
-            // self.clear_consume_buffer();
-            return Ok(String::new());
+            return Ok(());
         }
 
-        // self.clear_consume_buffer();
         self.consume(std::char::from_u32(num).unwrap_or(CHAR_REPLACEMENT));
 
-        return Ok(String::new());
+        return Ok(());
     }
 
     // Returns if the given codepoint number is in a reserved range (as defined in
@@ -210,7 +207,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     // This will consume an entity that does not start with &# (ie: &raquo; &#copy;)
-    fn consume_entity(&mut self, as_attribute: bool) -> Result<String, String> {
+    fn consume_entity(&mut self, as_attribute: bool) -> Result<(), ()> {
         // Processing is based on the golang.org/x/net/html package
 
         let mut capture = String::new();
@@ -232,7 +229,7 @@ impl<'a> Tokenizer<'a> {
                     self.parse_error("unexpected end of stream");
                     self.consume('&');
                     self.consume_string(capture);
-                    return Ok(String::new());
+                    return Ok(());
                 }
             }
         }
@@ -242,7 +239,7 @@ impl<'a> Tokenizer<'a> {
         if capture.len() == 0 {
             // If we found nohting (ie: &;)
             self.parse_error("expected entity name");
-            return Err(String::new());
+            return Err(());
 
         // } else if as_attribute {
         // @TODO: implement this
@@ -253,7 +250,7 @@ impl<'a> Tokenizer<'a> {
 
             let entity = TOKEN_NAMED_CHARS.get(capture.as_str()).unwrap();
             self.consume_string((*entity).to_string());
-            return Ok(String::new());
+            return Ok(());
         } else if !as_attribute {
             // If we found some text, but it's not an entity. We decrease the text until we find something that matches an entity.
             let mut max_len = capture.len();
@@ -269,14 +266,14 @@ impl<'a> Tokenizer<'a> {
                     let entity = TOKEN_NAMED_CHARS.get(substr.as_str()).unwrap();
                     self.consume_string((*entity).to_string());
                     self.consume_string(capture.chars().skip(j).collect());
-                    return Ok(String::new());
+                    return Ok(());
                 }
             }
         }
 
         self.consume('&');
         self.consume_string(capture.to_string());
-        return Ok(String::new());
+        return Ok(());
     }
 }
 
@@ -304,103 +301,103 @@ mod tests {
 
     entity_tests! {
         // Numbers
-        entity_0: ("&#10;", "str[\n]")
-        entity_1: ("&#0;", "str[�]")
-        entity_2: ("&#x0;", "str[�]")
-        entity_3: ("&#xdeadbeef;", "str[�]")     // replace with replacement char
-        entity_4: ("&#xd888;", "str[�]")         // replace with replacement char
-        entity_5: ("&#xbeef;", "str[뻯]")
-        entity_6: ("&#x10;", "str[]")                // reserved codepoint
-        entity_7: ("&#;", "str[&]")
-        entity_8: ("&;", "str[&;]")
-        entity_9: ("&", "str[&]")
-        entity_10: ("&#x1;", "str[]")             // reserved codepoint
-        entity_11: ("&#x0008;", "str[]")             // reserved codepoint
-        entity_12: ("&#0008;", "str[]")              // reserved codepoint
-        entity_13: ("&#8;", "str[]")                 // reserved codepoint
-        entity_14: ("&#x0009;", "str[\t]")
-        entity_15: ("&#x007F;", "str[]")             // reserved codepoint
-        entity_16: ("&#xFDD0;", "str[]")             // reserved codepoint
+        entity_0: ("&#10;", "\n")
+        entity_1: ("&#0;", "�")
+        entity_2: ("&#x0;", "�")
+        entity_3: ("&#xdeadbeef;", "�")     // replace with replacement char
+        entity_4: ("&#xd888;", "�")         // replace with replacement char
+        entity_5: ("&#xbeef;", "뻯")
+        entity_6: ("&#x10;", "")                // reserved codepoint
+        entity_7: ("&#;", "&#;")
+        entity_8: ("&;", "&;")
+        entity_9: ("&", "&")
+        entity_10: ("&#x1;", "")                // reserved codepoint
+        entity_11: ("&#x0008;", "")             // reserved codepoint
+        entity_12: ("&#0008;", "")              // reserved codepoint
+        entity_13: ("&#8;", "")                 // reserved codepoint
+        entity_14: ("&#x0009;", "\t")
+        entity_15: ("&#x007F;", "")             // reserved codepoint
+        entity_16: ("&#xFDD0;", "")             // reserved codepoint
 
         // Entities
-        entity_100: ("&copy;", "str[©]")
-        entity_101: ("&copyThing;", "str[©Thing;]")
-        entity_102: ("&raquo;", "str[»]")
-        entity_103: ("&laquo;", "str[«]")
-        entity_104: ("&not;", "str[¬]")
-        entity_105: ("&notit;", "str[¬it;]")
-        entity_106: ("&notin;", "str[∉]")
-        entity_107: ("&fo", "str[&fo]")
-        entity_108: ("&xxx", "str[&xxx]")
-        entity_109: ("&copy", "str[&copy]")
-        entity_110: ("&copy ", "str[© ]")
-        entity_111: ("&copya", "str[&copya]")
-        entity_112: ("&copya;", "str[©a;]")
-        entity_113: ("&#169;", "str[©]")
-        entity_114: ("&copy&", "str[©&]")
-        entity_115: ("&copya ", "str[©a ]")
-        // entity_116: ("&#169X ", "str[&]")       // What should this be?
+        entity_100: ("&copy;", "©")
+        entity_101: ("&copyThing;", "©Thing;")
+        entity_102: ("&raquo;", "»")
+        entity_103: ("&laquo;", "«")
+        entity_104: ("&not;", "¬")
+        entity_105: ("&notit;", "¬it;")
+        entity_106: ("&notin;", "∉")
+        entity_107: ("&fo", "&fo")
+        entity_108: ("&xxx", "&xxx")
+        entity_109: ("&copy", "&copy")
+        entity_110: ("&copy ", "© ")
+        entity_111: ("&copya", "&copya")
+        entity_112: ("&copya;", "©a;")
+        entity_113: ("&#169;", "©")
+        entity_114: ("&copy&", "©&")
+        entity_115: ("&copya ", "©a ")
+        // entity_116: ("&#169X ", "&")       // What should this be?
 
 
         // ChatGPT generated tests
-        entity_200: ("&copy;", "str[©]")
-        entity_201: ("&copy ", "str[© ]")
-        entity_202: ("&#169;", "str[©]")
-        entity_203: ("&#xA9;", "str[©]")
-        entity_204: ("&lt;", "str[<]")
-        entity_205: ("&unknown;", "str[&unknown;]")
-        entity_206: ("&#60;", "str[<]")
-        entity_207: ("&#x3C;", "str[<]")
-        entity_208: ("&amp;", "str[&]")
-        entity_209: ("&euro;", "str[€]")
-        entity_210: ("&gt;", "str[>]")
-        entity_211: ("&reg;", "str[®]")
-        entity_212: ("&#174;", "str[®]")
-        entity_213: ("&#xAE;", "str[®]")
-        entity_214: ("&quot;", "str[\"]")
-        entity_215: ("&#34;", "str[\"]")
-        entity_216: ("&#x22;", "str[\"]")
-        entity_217: ("&apos;", "str[']")
-        entity_218: ("&#39;", "str[']")
-        entity_219: ("&#x27;", "str[']")
-        entity_220: ("&excl;", "str[!]")
-        entity_221: ("&#33;", "str[!]")
-        entity_222: ("&num;", "str[#]")
-        entity_223: ("&#35;", "str[#]")
-        entity_224: ("&dollar;", "str[$]")
-        entity_225: ("&#36;", "str[$]")
-        entity_226: ("&percnt;", "str[%]")
-        entity_227: ("&#37;", "str[%]")
-        entity_228: ("&ast;", "str[*]")
-        entity_229: ("&#42;", "str[*]")
-        entity_230: ("&plus;", "str[+]")
-        entity_231: ("&#43;", "str[+]")
-        entity_232: ("&comma;", "str[,]")
-        entity_233: ("&#44;", "str[,]")
-        entity_234: ("&minus;", "str[−]")
-        entity_235: ("&#45;", "str[-]")
-        entity_236: ("&period;", "str[.]")
-        entity_237: ("&#46;", "str[.]")
-        entity_238: ("&sol;", "str[/]")
-        entity_239: ("&#47;", "str[/]")
-        entity_240: ("&colon;", "str[:]")
-        entity_241: ("&#58;", "str[:]")
-        entity_242: ("&semi;", "str[;]")
-        entity_243: ("&#59;", "str[;]")
-        entity_244: ("&equals;", "str[=]")
-        entity_245: ("&#61;", "str[=]")
-        entity_246: ("&quest;", "str[?]")
-        entity_247: ("&#63;", "str[?]")
-        entity_248: ("&commat;", "str[@]")
-        entity_249: ("&#64;", "str[@]")
-        entity_250: ("&COPY;", "str[©]")
-        entity_251: ("&#128;", "str[€]")
-        entity_252: ("&#x9F;", "str[Ÿ]")
-        entity_253: ("&#31;", "str[]")
-        entity_254: ("&#0;", "str[�]")
-        entity_255: ("&#xD800;", "str[�]")
-        entity_256: ("&unknownchar;", "str[&unknownchar;]")
-        entity_257: ("&#9999999;", "str[�]")
-        entity_259: ("&#11;", "str[]")
+        entity_200: ("&copy;", "©")
+        entity_201: ("&copy ", "© ")
+        entity_202: ("&#169;", "©")
+        entity_203: ("&#xA9;", "©")
+        entity_204: ("&lt;", "<")
+        entity_205: ("&unknown;", "&unknown;")
+        entity_206: ("&#60;", "<")
+        entity_207: ("&#x3C;", "<")
+        entity_208: ("&amp;", "&")
+        entity_209: ("&euro;", "€")
+        entity_210: ("&gt;", ">")
+        entity_211: ("&reg;", "®")
+        entity_212: ("&#174;", "®")
+        entity_213: ("&#xAE;", "®")
+        entity_214: ("&quot;", "\"")
+        entity_215: ("&#34;", "\"")
+        entity_216: ("&#x22;", "\"")
+        entity_217: ("&apos;", "'")
+        entity_218: ("&#39;", "'")
+        entity_219: ("&#x27;", "'")
+        entity_220: ("&excl;", "!")
+        entity_221: ("&#33;", "!")
+        entity_222: ("&num;", "#")
+        entity_223: ("&#35;", "#")
+        entity_224: ("&dollar;", "$")
+        entity_225: ("&#36;", "$")
+        entity_226: ("&percnt;", "%")
+        entity_227: ("&#37;", "%")
+        entity_228: ("&ast;", "*")
+        entity_229: ("&#42;", "*")
+        entity_230: ("&plus;", "+")
+        entity_231: ("&#43;", "+")
+        entity_232: ("&comma;", ",")
+        entity_233: ("&#44;", ",")
+        entity_234: ("&minus;", "−")
+        entity_235: ("&#45;", "-")
+        entity_236: ("&period;", ".")
+        entity_237: ("&#46;", ".")
+        entity_238: ("&sol;", "/")
+        entity_239: ("&#47;", "/")
+        entity_240: ("&colon;", ":")
+        entity_241: ("&#58;", ":")
+        entity_242: ("&semi;", ";")
+        entity_243: ("&#59;", ";")
+        entity_244: ("&equals;", "=")
+        entity_245: ("&#61;", "=")
+        entity_246: ("&quest;", "?")
+        entity_247: ("&#63;", "?")
+        entity_248: ("&commat;", "@")
+        entity_249: ("&#64;", "@")
+        entity_250: ("&COPY;", "©")
+        entity_251: ("&#128;", "€")
+        entity_252: ("&#x9F;", "Ÿ")
+        entity_253: ("&#31;", "")
+        entity_254: ("&#0;", "�")
+        entity_255: ("&#xD800;", "�")
+        entity_256: ("&unknownchar;", "&unknownchar;")
+        entity_257: ("&#9999999;", "�")
+        entity_259: ("&#11;", "")
     }
 }

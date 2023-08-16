@@ -21,6 +21,8 @@ pub struct Tokenizer<'a> {
     pub state: State,                // Current state of the tokenizer
     pub consumed: Vec<char>,         // Current consumed characters for current token
                                      // pub emitter: &'a mut dyn Emitter,   // Emitter trait that will emit the tokens during parsing
+
+    pub token_queue: Vec<Token>,     // Queue of emitted tokens. Needed because we can generate multiple tokens during iteration
 }
 
 impl<'a> Tokenizer<'a> {
@@ -30,11 +32,22 @@ impl<'a> Tokenizer<'a> {
             state: State::DataState,
             consumed: vec![],
             // emitter,
+            token_queue: vec![],
         };
     }
 
     // Retrieves the next token from the input stream or Token::EOF when the end is reached
     pub(crate) fn next_token(&mut self) -> Token {
+        self.consume_stream();
+
+        if self.token_queue.len() == 0 {
+            return Token::EofToken{};
+        }
+
+        return self.token_queue.remove(0);
+    }
+
+    fn consume_stream(&mut self) {
         loop {
             println!("state: {:?}", self.state);
             println!("consumed: {:?}", self.consumed);
@@ -45,7 +58,9 @@ impl<'a> Tokenizer<'a> {
                         Some(c) => c,
                         None => {
                             self.parse_error("EOF");
-                            return Token::EofToken;
+                            self.token_queue.push(Token::TextToken { value: self.get_consumed_str().to_string().clone() });
+                            self.token_queue.push(Token::EofToken);
+                            return;
                         }
                     };
 
@@ -60,7 +75,9 @@ impl<'a> Tokenizer<'a> {
                 }
                 State::CharacterReferenceInDataState => {
                     // consume character reference
-                    self.consume_character_reference(None, false);
+                    if self.consume_character_reference(None, false).is_err() {
+                        // @TODO: something went wrong? What to do?
+                    }
                     self.state = State::DataState;
                 }
                 State::RcDataState => {}
@@ -174,31 +191,31 @@ mod tests {
         let t = Token::CommentToken {
             value: String::from("this is a comment"),
         };
-        assert_eq!("comment[this is a comment]", t.to_string());
+        assert_eq!("<!-- this is a comment -->", t.to_string());
 
         let t = Token::TextToken {
             value: String::from("this is a string"),
         };
-        assert_eq!("str[this is a string]", t.to_string());
+        assert_eq!("this is a string", t.to_string());
 
         let t = Token::StartTagToken {
             name: String::from("tag"),
             is_self_closing: true,
             attributes: Vec::new(),
         };
-        assert_eq!("starttag[<tag/>]", t.to_string());
+        assert_eq!("<tag />", t.to_string());
 
         let t = Token::StartTagToken {
             name: String::from("tag"),
             is_self_closing: false,
             attributes: Vec::new(),
         };
-        assert_eq!("starttag[<tag>]", t.to_string());
+        assert_eq!("<tag>", t.to_string());
 
         let t = Token::EndTagToken {
             name: String::from("tag"),
         };
-        assert_eq!("endtag[</tag>]", t.to_string());
+        assert_eq!("</tag>", t.to_string());
 
         let t = Token::DocTypeToken {
             name: String::from("html"),
@@ -206,7 +223,7 @@ mod tests {
             pub_identifier: Option::from(String::from("foo")),
             sys_identifier: Option::from(String::from("bar")),
         };
-        assert_eq!("doctype[<html  FORCE_QUIRKS! foo bar>]", t.to_string());
+        assert_eq!("<!DOCTYPE html FORCE_QUIRKS! foo bar />", t.to_string());
     }
 
     #[test]
