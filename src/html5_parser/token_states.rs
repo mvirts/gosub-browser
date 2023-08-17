@@ -35,6 +35,7 @@ pub enum State {
     ScriptDataDoubleEscapeEndState,
     BeforeAttributeNameState,
     AttributeNameState,
+    AfterAttributeNameState,
     BeforeAttributeValueState,
     AttributeValueDoubleQuotedState,
     AttributeValueSingleQuotedState,
