@@ -57,7 +57,7 @@ impl<'a> Tokenizer<'a> {
                         Some(c) => c,
                         None => {
                             self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::TextToken { value: self.get_consumed_str().to_string().clone() });
+                            self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
                             self.token_queue.push(Token::EofToken);
                             continue;
                         }
@@ -67,17 +67,17 @@ impl<'a> Tokenizer<'a> {
                         '&' => {
                             self.state = State::CharacterReferenceInDataState;
 
-                            if self.is_consumed() {
-                                self.token_queue.push(Token::TextToken { value: self.get_consumed_str().to_string().clone() });
-                                self.clear_consume_buffer();
-                                // return;
-                            }
+                            // if self.is_consumed() {
+                            //     self.token_queue.push(Token::TextToken { value: self.get_consumed_str() });
+                            //     self.clear_consume_buffer();
+                            //     // return;
+                            // }
                         },
                         '<' => {
                             self.state = State::TagOpenState;
 
                             if self.is_consumed() {
-                                self.token_queue.push(Token::TextToken { value: self.get_consumed_str().to_string().clone() });
+                                self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
                                 self.clear_consume_buffer();
                                 // return;
                             }
@@ -191,7 +191,7 @@ impl<'a> Tokenizer<'a> {
                         '/' => self.state = State::EndTagOpenState,
                         'A'..='Z' => {
                             self.current_token = Some(Token::StartTagToken{
-                                name: String::new(),
+                                name: "".into(),
                                 is_self_closing: false,
                                 attributes: vec![],
                             });
@@ -201,7 +201,7 @@ impl<'a> Tokenizer<'a> {
                         },
                         'a'..='z' => {
                             self.current_token = Some(Token::StartTagToken{
-                                name: String::new(),
+                                name: "".into(),
                                 is_self_closing: false,
                                 attributes: vec![],
                             });
@@ -270,7 +270,7 @@ impl<'a> Tokenizer<'a> {
                         },
                         '/' => self.state = State::SelfClosingStartState,
                         '>' => {
-                            let new_name = self.get_consumed_str();
+                            let new_name = self.get_consumed_str().clone();
                             match &mut self.current_token.as_mut().unwrap() {
                                 Token::StartTagToken { name, .. } => {
                                     *name = new_name;
@@ -335,7 +335,7 @@ impl<'a> Tokenizer<'a> {
                         },
                         '/' => self.state = State::SelfClosingStartState,
                         '>' => {
-                            let new_name = self.get_consumed_str();
+                            let new_name = self.get_consumed_str().clone();
                             match &mut self.current_token.as_mut().unwrap() {
                                 Token::StartTagToken { name, .. } => {
                                     *name = new_name;
@@ -364,7 +364,7 @@ impl<'a> Tokenizer<'a> {
                         },
                         '"' | '\'' | '<' | '=' => {
                             self.parse_error("unexpected token found when starting attribute name");
-                            // Start new attribute in current tag, set name to 'c'
+                            // Start new attribute in current tag, set` name to 'c'
                             self.consume(c);
                             self.state = State::AttributeNameState;
                         }
@@ -373,7 +373,7 @@ impl<'a> Tokenizer<'a> {
                             self.consume(c);
                             self.state = State::AttributeNameState;
                         },
-                    };
+                    }
                 }
                 State::AttributeNameState => {
                     let c = match self.stream.read_char() {
@@ -414,12 +414,132 @@ impl<'a> Tokenizer<'a> {
                         _ => self.consume(c),
                     }
                 }
-                // State::BeforeAttributeValueState => {}
-                // State::AttributeValueDoubleQuotedState => {}
-                // State::AttributeValueSingleQuotedState => {}
-                // State::AttributeValueUnquotedState => {}
+                State::BeforeAttributeValueState => {
+                    let c = match self.stream.read_char() {
+                        Some(c) => c,
+                        None => {
+                            self.parse_error("End of stream reached");
+                            self.token_queue.push(Token::EofToken);
+                            continue;
+                        }
+                    };
+
+                    match c {
+                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
+                            // Ignore
+                        },
+                        '"' => self.state = State::AttributeValueDoubleQuotedState,
+                        '&' => {
+                            self.stream.unread();
+                            self.state = State::AttributeValueUnquotedState;
+                        },
+                        '\'' => {
+                            self.state = State::AttributeValueSingleQuotedState;
+                        }
+                        '>' => {
+                            self.parse_error("unexpected > encountered in before attribute value state");
+
+                            let new_name = self.get_consumed_str().clone();
+                            match &mut self.current_token.as_mut().unwrap() {
+                                Token::StartTagToken { name, .. } => {
+                                    *name = new_name;
+                                }
+                                _ => {
+                                    // @TODO: this was not a starttagtoken
+                                }
+                            }
+
+                            self.clear_consume_buffer();
+                            // We are cloning the current token before we send it to the token_queue. This might be inefficient.
+                            self.token_queue.push(self.current_token.clone().unwrap());
+                            self.current_token = None;
+                            self.state = State::DataState;
+                        },
+                        '<' | '=' | '`' => {
+                            self.parse_error("unexpected character encountered in before attribute value state");
+                            self.consume(c);
+                        }
+                        _ => {
+                            self.consume(c);
+                        },
+                    }
+                }
+                State::AttributeValueDoubleQuotedState => {
+                    let c = match self.stream.read_char() {
+                        Some(c) => c,
+                        None => {
+                            self.parse_error("End of stream reached");
+                            self.token_queue.push(Token::EofToken);
+                            continue;
+                        }
+                    };
+
+                    match c {
+                        '"' => self.state = State::AfterAttributeValueQuotedState,
+                        '&' => {
+                            _ = self.consume_character_reference(Some('"'), true);
+                        },
+                        '\u{0000}' => {
+                            self.parse_error("NUL encountered in attribute value");
+                            self.consume(CHAR_REPLACEMENT);
+                        },
+                        _ => {
+                            self.consume(c);
+                        },
+                    }
+                }
+                State::AttributeValueSingleQuotedState => {
+                    let c = match self.stream.read_char() {
+                        Some(c) => c,
+                        None => {
+                            self.parse_error("End of stream reached");
+                            self.token_queue.push(Token::EofToken);
+                            continue;
+                        }
+                    };
+
+                    match c {
+                        '\'' => self.state = State::AfterAttributeValueQuotedState,
+                        '&' => {
+                            _ = self.consume_character_reference(Some('\''), true);
+                        },
+                        '\u{0000}' => {
+                            self.parse_error("NUL encountered in attribute value");
+                            self.consume(CHAR_REPLACEMENT);
+                        },
+                        _ => {
+                            self.consume(c);
+                        },
+                    }
+                }
+                //State::AttributeValueUnquotedState => {}
                 // State::CharacterReferenceInAttributeValueState => {}
-                // State::AfterAttributeValueQuotedState => {}
+                State::AfterAttributeValueQuotedState => {
+                    let c = match self.stream.read_char() {
+                        Some(c) => c,
+                        None => {
+                            self.parse_error("End of stream reached");
+                            self.token_queue.push(Token::EofToken);
+                            continue;
+                        }
+                    };
+
+                    match c {
+                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
+                            self.state = State::BeforeAttributeNameState
+                        },
+                        '\'' => self.state = State::SelfClosingStartState,
+                        '>' => {
+                            self.state = State::DataState;
+                            // @TODO: Emit CURRENT TAG TOKEN
+                        },
+                        _ => {
+                            self.parse_error("unexpected character encountered in the after attribute value state");
+                            self.state = State::BeforeAttributeNameState;
+                            self.stream.unread();
+                        },
+                    }
+                }
                 State::SelfClosingStartState => {
                     let c = match self.stream.read_char() {
                         Some(c) => c,
@@ -432,7 +552,7 @@ impl<'a> Tokenizer<'a> {
 
                     match c {
                         '>' => {
-                            let new_name = self.get_consumed_str();
+                            let new_name = self.get_consumed_str().clone();
                             match &mut self.current_token.as_mut().unwrap() {
                                 Token::StartTagToken { name, is_self_closing, .. } => {
                                     *name = new_name;
@@ -513,7 +633,7 @@ impl<'a> Tokenizer<'a> {
 
     // Return the consumed string as a String
     pub fn get_consumed_str(&self) -> String {
-        self.consumed.iter().collect()
+        return self.consumed.iter().collect();
     }
 
     // Returns true if there is anything in the consume buffer
@@ -538,39 +658,73 @@ mod tests {
     use super::*;
     use crate::html5_parser::token::{Token, TokenTrait, TokenType};
 
+    macro_rules! test_start_token {
+        ($($name:ident : $value:expr)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, name, is_self_closing, attributes, message) = $value;
+
+                    let mut is = InputStream::new();
+                    is.read_from_str(input, None);
+                    let mut tkznr = Tokenizer::new(&mut is);
+                    let t = tkznr.next_token();
+                    assert!(t == Token::StartTagToken{ name: String::from(name), is_self_closing, attributes}, "{}", message);
+                }
+            )*
+        }
+    }
+
+    macro_rules! test_text_token {
+        ($($name:ident : $value:expr)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, value, message) = $value;
+
+                    let mut is = InputStream::new();
+                    is.read_from_str(input, None);
+                    let mut tkznr = Tokenizer::new(&mut is);
+                    let t = tkznr.next_token();
+                    assert!(t == Token::TextToken{ value: String::from(value)}, "{}", message);
+                }
+            )*
+        }
+    }
+
     #[test]
     fn test_tokens() {
         let t = Token::CommentToken {
-            value: String::from("this is a comment"),
+            value: "this is a comment".into(),
         };
         assert_eq!("<!-- this is a comment -->", t.to_string());
 
         let t = Token::TextToken {
-            value: String::from("this is a string"),
+            value: "this is a string".into(),
         };
         assert_eq!("this is a string", t.to_string());
 
         let t = Token::StartTagToken {
-            name: String::from("tag"),
+            name: "tag".into(),
             is_self_closing: true,
             attributes: Vec::new(),
         };
         assert_eq!("<tag />", t.to_string());
 
         let t = Token::StartTagToken {
-            name: String::from("tag"),
+            name: "tag".into(),
             is_self_closing: false,
             attributes: Vec::new(),
         };
         assert_eq!("<tag>", t.to_string());
 
         let t = Token::EndTagToken {
-            name: String::from("tag"),
+            name: "tag".into(),
         };
         assert_eq!("</tag>", t.to_string());
 
         let t = Token::DocTypeToken {
-            name: String::from("html"),
+            name: "html".into(),
             force_quirks: true,
             pub_identifier: Option::from(String::from("foo")),
             sys_identifier: Option::from(String::from("bar")),
@@ -600,7 +754,6 @@ mod tests {
     fn test_tags() {
         let mut is = InputStream::new();
         is.read_from_str("<bar >< bar><bar/><a> <b> <foo> <FOO> <bar > <bar/> <  bar >", None);
-
         let mut tkznr = Tokenizer::new(&mut is);
 
         for _ in 1..20 {
@@ -621,10 +774,27 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_tokens() {
+    test_start_token! {
+        // start_test_1: ("<div>", "div", false, vec![], "Basic tag")
+        start_test_2: ("<img src=\"image.jpg\">", "img", false, vec![("src".into(), "image.jpg".into())], "Tag with a quoted attribute")
+        // start_test_3: ("<a href='http://example.com'>", "a", false, vec![("src".into(), "image.jpg".into())], "Tag with single-quoted attribute")
+        // start_test_4: ("<name attr=value>", "name", false, vec![("attr".into(), "value".into())], "Tag with an unquoted attribute")
+        // start_test_5: ("<br/>", "br", true, vec![], "Self-closing tag")
+        // start_test_6: ("<article data-id=\"5\">", "article", false, vec![("data-id".into(), "5".into())], "Data attribute")
+        // start_test_7: ("<SVG>", "svg", false, vec![], "Uppercase tag name")
+        // start_test_8: ("<FooBaR>", "foobar", false, vec![], "Mixed case tag name")
+        // start_test_9: ("<span class='highlight'>", "span", false, vec![("class".into(), "highlight".into())], "Single-quoted attribute value")
+        // start_test_10: ("<link rel=\"stylesheet\" href=\"styles.css\">", "link", false, vec![("rel".into(), "stylesheet".into()), ("href".into(), "styles.css".into())], "Multiple attributes")
+        // start_test_11: ("<audio controls>", "audio", false, vec![("controls".into(), "".into())], "Boolean attribute")
+        // start_test_12: ("<area href=\"#\" alt=\"Link\">", "a", false, vec![("href".into(), "#".into()), ("alt".into(), "Links".into())], "Tag with multiple attributes, including a fragment URL")
+        // start_test_13: ("<canvas id=\"myCanvas\">", "canvas", false, vec![("id".into(), "myCanvas".into())], "CamelCase attribute")
     }
 
+    test_text_token! {
+        text_test_1: ("< space>", "< space>", "Tag with spaces in the name")
+        text_test_2: ("<123>", "<123>", "Name starting with numbers")
+        text_test_3: ("<tag-name>", "<tag-name>", "Tag with a hyphen in its name")
+    }
 
     /*
     <div> - Basic tag

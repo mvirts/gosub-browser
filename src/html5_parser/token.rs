@@ -10,7 +10,7 @@ pub enum TokenType {
 }
 
 // The different token structures that can be emitted by the tokenizer
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Token {
     DocTypeToken {
         name: String,
