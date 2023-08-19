@@ -16,22 +16,62 @@ pub struct Tokenizer<'a> {
     pub consumed: Vec<char>,            // Current consumed characters for current token
     pub current_attr_name: String,      // Current attribute name that we need to store temporary in case we are parsing attribute values
     pub current_token: Option<Token>,   // Token that is currently in the making (if any)
+    pub temporary_buffer: Vec<char>,    // Temporary buffer
     pub token_queue: Vec<Token>,        // Queue of emitted tokens. Needed because we can generate multiple tokens during iteration
+    pub errors: Vec<ParseError>,        // Parse errors (if any)
+    pub last_start_token: String,       // The last emitted start token (or empty if none)
 }
 
 pub struct Options {
-    pub initial_state: State,
+    pub initial_state: State,           // Sets the initial state of the tokenizer. Normally only needed when dealing with tests
+    pub last_start_tag: String,         // Sets the last starting tag in the tokenizer. Normally only needed when dealing with tests
+}
+
+// Read a character or continues the tokenizer loop.
+macro_rules! read_or_eof {
+    ($self:expr) => {
+        match $self.stream.read_char() {
+            Some(c) => c,
+            None => {
+                $self.parse_error("End of stream reached");
+
+                println!("temp buf len: {} ", $self.temporary_buffer.len());
+                if $self.temporary_buffer.len() > 0 {
+                    let s = $self.temporary_buffer.iter().collect();
+                    $self.consume_string(s);
+                }
+
+                if $self.is_consumed() {
+                    $self.token_queue.push(Token::TextToken { value: $self.get_consumed_str().clone() });
+                    $self.clear_consume_buffer();
+                }
+                $self.token_queue.push(Token::EofToken);
+                continue;
+            }
+        }
+    };
+}
+
+// Parse error message
+pub struct ParseError {
+    message: String,        // Parse message
+    line: usize,            // Line number of the error
+    offset: usize           // Position of the error on the line
 }
 
 impl<'a> Tokenizer<'a> {
+    // Creates a new tokenizer with the given inputstream and additional options if any
     pub fn new(input: &'a mut InputStream /*, emitter: &'a mut dyn Emitter*/, opts: Option<Options>) -> Self {
         return Tokenizer {
             stream: input,
-            state: opts.map_or(State::DataState, |o| o.initial_state),
+            state: opts.as_ref().map_or(State::DataState, |o| o.initial_state),
+            last_start_token: opts.as_ref().map_or(String::new(), |o| o.last_start_tag.clone()),
             consumed: vec![],
             current_token: None,
             token_queue: vec![],
             current_attr_name: String::new(),
+            temporary_buffer: vec![],
+            errors: vec![],
         };
     }
 
@@ -46,6 +86,7 @@ impl<'a> Tokenizer<'a> {
         return self.token_queue.remove(0);
     }
 
+    // Consumes the input stream. Continues until the stream is completed or a token has been generated.
     fn consume_stream(&mut self) {
         loop {
             // println!("state: {:?}", self.state);
@@ -71,12 +112,6 @@ impl<'a> Tokenizer<'a> {
                     match c {
                         '&' => {
                             self.state = State::CharacterReferenceInDataState;
-
-                            // if self.is_consumed() {
-                            //     self.token_queue.push(Token::TextToken { value: self.get_consumed_str() });
-                            //     self.clear_consume_buffer();
-                            //     // return;
-                            // }
                         },
                         '<' => {
                             self.state = State::TagOpenState;
@@ -84,7 +119,6 @@ impl<'a> Tokenizer<'a> {
                             if self.is_consumed() {
                                 self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
                                 self.clear_consume_buffer();
-                                // return;
                             }
                         },
                         '\u{0000}' => {
@@ -99,14 +133,7 @@ impl<'a> Tokenizer<'a> {
                     self.state = State::DataState;
                 }
                 State::RcDataState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         '&' => self.state = State::CharacterReferenceInRcDataState,
@@ -123,41 +150,25 @@ impl<'a> Tokenizer<'a> {
                     self.state = State::RcDataState;
                 }
                 State::RawTextState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         '<' => self.state = State::RawTextLessThanSignState,
                         '\u{0000}' => {
                             self.parse_error("NUL encountered in raw text");
                             self.consume(CHAR_REPLACEMENT);
-                            // return;
                         }
                         _ => self.consume(c),
                     }
                 }
                 State::ScriptDataState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         '<' => self.state = State::ScriptDataLessThenSignState,
                         '\u{0000}' => {
                             self.parse_error("NUL encountered in script data");
                             self.consume(CHAR_REPLACEMENT);
-                            // return;
                         }
                         _ => self.consume(c),
                     }
@@ -179,20 +190,12 @@ impl<'a> Tokenizer<'a> {
                         '\u{0000}' => {
                             self.parse_error("NUL encountered in plain text stream");
                             self.consume(CHAR_REPLACEMENT);
-                            // return;
                         }
                         _ => self.consume(c),
                     }
                 }
                 State::TagOpenState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         '!' => self.state = State::MarkupDeclarationOpenState,
@@ -218,7 +221,7 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::TagNameState;
                         }
                         '?' => {
-                            self.parse_error("questionmark encountered during tag opening");
+                            self.parse_error("question mark encountered during tag opening");
                             self.state = State::BogusCommentState;
                         }
                         _ => {
@@ -263,14 +266,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::TagNameState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
@@ -285,11 +281,8 @@ impl<'a> Tokenizer<'a> {
                             self.set_name_in_current_token(self.get_consumed_str());
 
                             self.clear_consume_buffer();
-                            // We are cloning the current token before we send it to the token_queue. This might be inefficient.
-                            self.token_queue.push(self.current_token.clone().unwrap());
-                            self.current_token = None;
+                            self.push_token_to_queue();
                             self.state = State::DataState;
-                            // return;
                         },
                         '\u{0000}' => {
                             self.parse_error("NUL encountered in tag name");
@@ -301,12 +294,205 @@ impl<'a> Tokenizer<'a> {
                         _ => self.consume(c),
                     }
                 }
-                // State::RcDataLessThanSignState => {}
-                // State::RcDataEndTagOpenState => {}
-                // State::RcDataEndTagNameState => {}
-                // State::RawTextLessThanSignState => {}
-                // State::RawTextEndTagOpenState => {}
-                // State::RawTextEndTagNameState => {}
+                State::RcDataLessThanSignState => {
+                    let c = read_or_eof!(self);
+
+                    match c {
+                        '/' => {
+                            self.temporary_buffer = vec![];
+                            self.state = State::RcDataEndTagOpenState;
+                        },
+                        _ => {
+                            self.consume('<');
+                            self.stream.unread();
+                            self.state = State::RcDataState;
+                        },
+                    }
+                }
+                State::RcDataEndTagOpenState => {
+                    let c = read_or_eof!(self);
+
+                    self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
+
+                    match c {
+                        'A'..='Z' => {
+                            self.current_token = Some(Token::EndTagToken{
+                                name: "".into(),
+                            });
+                            self.temporary_buffer.push(((c as u8) + 0x20) as char);
+                            self.state = State::RcDataEndTagNameState;
+                        },
+                        'a'..='z' => {
+                            self.current_token = Some(Token::EndTagToken{
+                                name: "".into(),
+                            });
+                            self.temporary_buffer.push(c);
+                            self.state = State::RcDataEndTagNameState;
+                        }
+                        _ => {
+                            self.consume('<');
+                            self.consume('/');
+                            self.stream.unread();
+                            self.state = State::RcDataState;
+                        },
+                    }
+                }
+                State::RcDataEndTagNameState => {
+                    let c = read_or_eof!(self);
+
+                    // we use this flag because a lot of matches will actually do the same thing
+                    let mut consume_anything_else = false;
+
+                    match c {
+                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                self.state = State::BeforeAttributeNameState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        '/' => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                self.state = State::SelfClosingStartState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        '>' => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                let s: String = self.temporary_buffer.iter().collect::<String>();
+                                self.set_name_in_current_token(s);
+
+                                self.clear_consume_buffer();
+                                self.push_token_to_queue();
+                                self.state = State::DataState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        'A'..='Z' => {
+                            self.temporary_buffer.push(((c as u8) + 0x20) as char);
+                        }
+                        'a'..='z' => {
+                            self.temporary_buffer.push(c);
+                        }
+                        _ => {
+                            consume_anything_else = true;
+                        },
+                    }
+
+                    if consume_anything_else {
+                        self.consume('<');
+                        self.consume('/');
+                        for c in self.temporary_buffer.clone() {
+                            self.consume(c);
+                        }
+                        self.temporary_buffer.clear();
+
+                        self.stream.unread();
+                        self.state = State::RcDataState;
+                    }
+                }
+                State::RawTextLessThanSignState => {
+                    let c = read_or_eof!(self);
+
+                    match c {
+                        '/' => {
+                            self.temporary_buffer = vec![];
+                            self.state = State::RawTextEndTagOpenState;
+                        },
+                        _ => {
+                            self.consume('<');
+                            self.stream.unread();
+                            self.state = State::RawTextState;
+                        },
+                    }
+                }
+                State::RawTextEndTagOpenState => {
+                    let c = read_or_eof!(self);
+
+                    self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
+
+                    match c {
+                        'A'..='Z' => {
+                            self.current_token = Some(Token::EndTagToken{
+                                name: "".into(),
+                            });
+                            self.temporary_buffer.push(((c as u8) + 0x20) as char);
+                            self.state = State::RawTextEndTagNameState;
+                        },
+                        'a'..='z' => {
+                            self.current_token = Some(Token::EndTagToken{
+                                name: "".into(),
+                            });
+                            self.temporary_buffer.push(c);
+                            self.state = State::RawTextEndTagNameState;
+                        }
+                        _ => {
+                            self.consume('<');
+                            self.consume('/');
+                            self.stream.unread();
+                            self.state = State::RawTextState;
+                        },
+                    }
+                }
+                State::RawTextEndTagNameState => {
+                    let c = read_or_eof!(self);
+
+                    // we use this flag because a lot of matches will actually do the same thing
+                    let mut consume_anything_else = false;
+
+                    match c {
+                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                self.state = State::BeforeAttributeNameState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        '/' => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                self.state = State::SelfClosingStartState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        '>' => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                let s: String = self.temporary_buffer.iter().collect::<String>();
+                                self.set_name_in_current_token(s);
+
+                                self.clear_consume_buffer();
+                                self.push_token_to_queue();
+                                self.state = State::DataState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        'A'..='Z' => {
+                            self.temporary_buffer.push(((c as u8) + 0x20) as char);
+                        }
+                        'a'..='z' => {
+                            self.temporary_buffer.push(c);
+                        }
+                        _ => {
+                            consume_anything_else = true;
+                        },
+                    }
+
+                    if consume_anything_else {
+                        self.consume('<');
+                        self.consume('/');
+                        for c in self.temporary_buffer.clone() {
+                            self.consume(c);
+                        }
+                        self.temporary_buffer.clear();
+
+                        self.stream.unread();
+                        self.state = State::RawTextState;
+                    }
+
+                }
                 // State::ScriptDataLessThenSignState => {}
                 // State::ScriptDataEndTagOpenState => {}
                 // State::ScriptDataEndTagNameState => {}
@@ -324,14 +510,7 @@ impl<'a> Tokenizer<'a> {
                 // State::ScriptDataDoubleEscapedLessThanSignState => {}
                 // State::ScriptDataDoubleEscapeEndState => {}
                 State::BeforeAttributeNameState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
@@ -340,13 +519,8 @@ impl<'a> Tokenizer<'a> {
                         '/' => self.state = State::SelfClosingStartState,
                         '>' => {
                             self.clear_consume_buffer();
-
-                            // We are cloning the current token before we send it to the token_queue. This might be inefficient.
-                            self.token_queue.push(self.current_token.clone().unwrap());
-                            self.current_token = None;
+                            self.push_token_to_queue();
                             self.state = State::DataState;
-
-                            // return;
                         },
                         'A'..='Z' => {
                             // consume lower case
@@ -371,14 +545,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AttributeNameState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
@@ -406,10 +573,7 @@ impl<'a> Tokenizer<'a> {
                                 String::from(""),
                             );
                             self.clear_consume_buffer();
-
-                            // We are cloning the current token before we send it to the token_queue. This might be inefficient.
-                            self.token_queue.push(self.current_token.clone().unwrap());
-                            self.current_token = None;
+                            self.push_token_to_queue();
                             self.state = State::DataState;
                         }
                         '\u{0000}' => {
@@ -427,14 +591,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::BeforeAttributeValueState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
@@ -456,10 +613,7 @@ impl<'a> Tokenizer<'a> {
                         '>' => {
                             self.parse_error("unexpected > encountered in before attribute value state");
                             self.set_name_in_current_token(self.get_consumed_str());
-
-                            // We are cloning the current token before we send it to the token_queue. This might be inefficient.
-                            self.token_queue.push(self.current_token.clone().unwrap());
-                            self.current_token = None;
+                            self.push_token_to_queue();
                             self.state = State::DataState;
                         },
                         '<' | '=' | '`' => {
@@ -474,14 +628,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AttributeValueDoubleQuotedState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         '"' => {
@@ -505,14 +652,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AttributeValueSingleQuotedState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         '\'' => {
@@ -536,14 +676,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AttributeValueUnquotedState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
@@ -563,10 +696,7 @@ impl<'a> Tokenizer<'a> {
                                 self.get_consumed_str()
                             );
                             self.clear_consume_buffer();
-
-                            // We are cloning the current token before we send it to the token_queue. This might be inefficient.
-                            self.token_queue.push(self.current_token.clone().unwrap());
-                            self.current_token = None;
+                            self.push_token_to_queue();
                             self.state = State::DataState;
                         },
                         '\u{0000}' => {
@@ -585,14 +715,7 @@ impl<'a> Tokenizer<'a> {
                 }
                 // State::CharacterReferenceInAttributeValueState => {}
                 State::AfterAttributeValueQuotedState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
@@ -601,9 +724,6 @@ impl<'a> Tokenizer<'a> {
                         '\'' => self.state = State::SelfClosingStartState,
                         '>' => {
                             // self.set_add_attribute_to_current_token(self.current_attr_name.clone(), self.get_consumed_str());
-
-                            // We are cloning the current token before we send it to the token_queue. This might be inefficient.
-                            self.token_queue.push(self.current_token.clone().unwrap());
                             self.current_token = None;
                             self.state = State::DataState;
                         },
@@ -615,23 +735,13 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::SelfClosingStartState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
-                        None => {
-                            self.parse_error("End of stream reached");
-                            self.token_queue.push(Token::EofToken);
-                            continue;
-                        }
-                    };
+                    let c = read_or_eof!(self);
 
                     match c {
                         '>' => {
                             // self.set_name_in_current_token(self.get_consumed_str());
                             self.set_is_closing_in_current_token(true);
-
-                            // We are cloning the current token before we send it to the token_queue. This might be inefficient.
-                            self.token_queue.push(self.current_token.clone().unwrap());
-                            self.current_token = None;
+                            self.push_token_to_queue();
                             self.state = State::DataState;
                         }
                         '\u{0000}' => {
@@ -694,6 +804,11 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    fn is_appropriate_end_token(&self, end_token: &Vec<char>) -> bool {
+        let s: String = end_token.iter().collect();
+        self.last_start_token == s
+    }
+
     // Return the consumed string as a String
     pub fn get_consumed_str(&self) -> String {
         return self.consumed.iter().collect();
@@ -712,9 +827,12 @@ impl<'a> Tokenizer<'a> {
     // Creates a parser log error message
     pub(crate) fn parse_error(&mut self, _str: &str) {
         // Add to parse log
-        println!("parse_error on offset {}: {}", self.stream.tell(), _str)
+        self.errors.push(ParseError{
+            message: _str.to_string(),
+            line: 1,
+            offset: self.stream.tell()
+        });
     }
-
 
     // Set is_closing_tag in current token
     fn set_is_closing_in_current_token(&mut self, is_closing: bool) {
@@ -723,7 +841,7 @@ impl<'a> Tokenizer<'a> {
                 *is_self_closing = is_closing;
             }
             _ => {
-                // @TODO: this was not a starttagtoken
+                // @TODO: this was not a start tag token
             }
         }
 
@@ -739,7 +857,7 @@ impl<'a> Tokenizer<'a> {
                 );
             }
             _ => {
-                // @TODO: this was not a starttagtoken
+                // @TODO: this was not a start tag token
             }
         }
 
@@ -751,13 +869,31 @@ impl<'a> Tokenizer<'a> {
         match &mut self.current_token.as_mut().unwrap() {
             Token::StartTagToken { name, .. } => {
                 *name = new_name.clone();
-            }
-            _ => {
-                // @TODO: this was not a starttagtoken
-            }
+            },
+            Token::EndTagToken { name, .. } => {
+                *name = new_name.clone();
+            },
+            _ => panic!("trying to set the name of a non start/end tag token")
         }
 
         self.clear_consume_buffer();
+    }
+
+    // Pushes the current configured token onto the token stack, and clears the current token
+    fn push_token_to_queue(&mut self) {
+        // If we are pushing a start token, remember the name for later end-tag matching use
+        if self.current_token.is_some() {
+            match self.current_token.clone().unwrap() {
+                Token::StartTagToken { name, .. } => {
+                    self.last_start_token = name;
+                },
+                _ => {}
+            }
+        }
+
+        // We are cloning the current token before we send it to the token_queue. This might be inefficient.
+        self.token_queue.push(self.current_token.clone().unwrap());
+        self.current_token = None;
     }
 }
 
@@ -849,16 +985,16 @@ mod tests {
         let mut is = InputStream::new();
         is.read_from_str("This code is &copy; 2023 &#x80;", None);
 
-        let mut tkznr = Tokenizer::new(&mut is);
+        let mut tokenizer = Tokenizer::new(&mut is, None);
 
-        let t = tkznr.next_token();
+        let t = tokenizer.next_token();
         assert_eq!(TokenType::TextToken, t.type_of());
 
         if let Token::TextToken { value } = t {
             assert_eq!("This code is © 2023 €", value);
         }
 
-        let t = tkznr.next_token();
+        let t = tokenizer.next_token();
         assert_eq!(TokenType::EofToken, t.type_of());
     }
 
@@ -866,10 +1002,10 @@ mod tests {
     fn test_tags() {
         let mut is = InputStream::new();
         is.read_from_str("<bar >< bar><bar/><a> <b> <foo> <FOO> <bar > <bar/> <  bar >", None);
-        let mut tkznr = Tokenizer::new(&mut is);
+        let mut tokenizer = Tokenizer::new(&mut is, None);
 
         for _ in 1..20 {
-            let t = tkznr.next_token();
+            let t = tokenizer.next_token();
             println!("--> Token type: {:?}", t.type_of());
             match t {
                 Token::DocTypeToken { .. } => {}

@@ -77,9 +77,10 @@ fn run_token_test(test: &Test)
 {
     println!("🧪 running test: {}", test.description);
 
-    println!("INITIAL STATES: {:?}", test.initial_states);
+    // println!("INITIAL STATES: {:?}", test.initial_states);
 
     // run for each state
+    let last_start_tag = test.last_start_tag.clone().unwrap();
     for state in test.initial_states.iter() {
         let state= match state.as_str() {
             "PLAINTEXT state" => TokenState::PlaintextState,
@@ -90,19 +91,20 @@ fn run_token_test(test: &Test)
             "Data state" => TokenState::DataState,
             _ => panic!("unknown state found in test: {} ", state)
         };
-        println!("RUN ON STATE: {:?}", state);
+        // println!("RUN ON STATE: {:?}", state);
 
         let mut is = InputStream::new();
         is.read_from_str(test.input.as_str(), None);
         let mut tkznr = Tokenizer::new(&mut is, Some(Options{
             initial_state: state,
+            last_start_tag: last_start_tag.clone(),
         }));
 
         // There can be multiple tokens to match. Make sure we match all of them
         for expected_token in test.output.iter() {
-            println!("Trying to match output");
+            // println!("Trying to match output");
             let t = tkznr.next_token();
-            println!("Token: {}", t);
+            // println!("Token: {}", t);
             match_token(t, expected_token);
         }
     }
@@ -123,22 +125,24 @@ fn match_token(have: Token, expected: &Vec<Value>) {
     };
 
     if have.type_of() != expected_token_type {
-        println!("❌ Incorrect token type found (want: {:?}, got {:?}", expected_token_type, have.type_of());
+        println!("❌ Incorrect token type found (want: {:?}, got {:?})", expected_token_type, have.type_of());
         return;
     }
 
     match have {
         Token::DocTypeToken{..} => {
-            println!("❌ Incorrect doctype");
+            println!("❌ Incorrect doctype (not implemented in testsuite)");
             return;
         }
         Token::StartTagToken{..} => {
-            println!("❌ Incorrect start tag");
+            println!("❌ Incorrect start tag (not implemented in testsuite)");
             return;
         }
-        Token::EndTagToken{..} => {
-            println!("❌ Incorrect end tag");
-            return;
+        Token::EndTagToken{name} => {
+            if name.as_str() != expected.get(1).unwrap() {
+                println!("❌ Incorrect end tag");
+                return;
+            }
         }
         Token::CommentToken{value} => {
             if value.as_str() != expected.get(1).unwrap() {
@@ -148,7 +152,7 @@ fn match_token(have: Token, expected: &Vec<Value>) {
         }
         Token::TextToken{value} => {
             if value.as_str() != expected.get(1).unwrap() {
-                println!("❌ Incorrect text found in comment token");
+                println!("❌ Incorrect text found in text token (want: {} got: {})", expected.get(1).unwrap(), value.as_str());
                 return;
             }
         },
