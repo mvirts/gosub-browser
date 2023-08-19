@@ -291,7 +291,7 @@ mod tests {
 
                     let mut is = InputStream::new();
                     is.read_from_str(input, None);
-                    let mut tok = Tokenizer::new(&mut is);
+                    let mut tok = Tokenizer::new(&mut is, None);
                     let t = tok.next_token();
                     assert_eq!(expected, t.to_string());
                 }

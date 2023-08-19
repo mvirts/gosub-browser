@@ -21,13 +21,16 @@ pub enum Confidence {
 
 // HTML(5) input stream structure
 pub struct InputStream {
-    encoding: Encoding,                // Current encoding
-    pub(crate) confidence: Confidence, // How confident are we that this is the correct encoding?
-    current: usize,                    // Current offset of the reader
-    length: usize,                     // Length (in bytes) of the buffer
-    buffer: Vec<char>,                 // Reference to the actual buffer stream in characters
-    u8_buffer: Vec<u8>,                // Reference to the actual buffer stream in u8 bytes
-                                       // If all things are ok, both buffer and u8_buffer should refer to the same memory location
+    encoding: Encoding,                 // Current encoding
+    pub(crate) confidence: Confidence,  // How confident are we that this is the correct encoding?
+    pub current_offset: usize,              // Current offset of the reader
+    pub current_line: usize,                // Current line (1 based)
+    pub current_line_offset: usize,         // Current offset on line (1 based)
+    pub length: usize,                      // Length (in chars) of the buffer
+    buffer: Vec<char>,                  // Reference to the actual buffer stream in characters
+    u8_buffer: Vec<u8>,                 // Reference to the actual buffer stream in u8 bytes
+                                        // If all things are ok, both buffer and u8_buffer should refer to the same memory location
+    line_offset: Vec<usize>,            // Offsets for all lines (or at least the lines already scanned)
 }
 
 impl InputStream {
@@ -36,10 +39,13 @@ impl InputStream {
         InputStream {
             encoding: Encoding::UTF8,
             confidence: Confidence::Tentative,
-            current: 0,
+            current_offset: 0,
+            current_line_offset: 1,
+            current_line: 1,
             length: 0,
             buffer: Vec::new(),
             u8_buffer: Vec::new(),
+            line_offset: vec![0],       // Line 0 (actually 1) starts at offset 0
         }
     }
 
@@ -55,25 +61,61 @@ impl InputStream {
 
     // Returns true when the stream pointer is at the end of the stream
     pub fn eof(&self) -> bool {
-        self.current >= self.length
+        self.current_offset >= self.length
     }
 
     // Reset the stream reader back to the start
     pub fn reset(&mut self) {
-        self.current = 0
+        self.current_offset = 0;
+        self.current_line = 1;
+        self.current_line_offset = 1;
     }
 
     // Seek explicit offset in the stream (based on chars)
     pub fn seek(&mut self, mut off: usize) {
+        // cap offset to the length of the stream
         if off > self.length {
-            off = self.length
+            off = self.length - 1
         }
 
-        self.current = off
+        // Try and find the line number for this offset
+        let mut last_offset = 0;
+        let mut ln = 1;
+        for o in self.line_offset.clone() {
+            // Found the line
+            if o > off {
+                self.current_offset = off;
+                self.current_line = ln;
+                self.current_line_offset = off - last_offset + 1;
+                return;
+            }
+
+            last_offset = o;
+            ln += 1;
+        }
+
+        // No offset found. We haven't scanned this far in the stream yet, scan further until we find offset
+        loop {
+            self.current_offset += 1;
+            self.current_line_offset += 1;
+
+            // Check the next char to see if it's a '\n'
+            let c = self.buffer[self.current_offset];
+            if c == '\n' {
+                self.line_offset.push(self.current_offset);
+                self.current_line += 1;
+                self.current_line_offset = 0;
+            }
+
+            // End of stream or found our offset
+            if self.current_offset >= self.length || self.current_offset == off {
+                break;
+            }
+        }
     }
 
     pub fn tell(&self) -> usize {
-        self.current
+        self.current_offset
     }
 
     // Set the given confidence of the input stream encoding
@@ -122,7 +164,7 @@ impl InputStream {
         // First we read the u8 bytes into a buffer
         f.read_to_end(&mut self.u8_buffer).expect("uh oh");
         self.force_set_encoding(e.unwrap_or(Encoding::UTF8));
-        self.current = 0;
+        self.current_offset = 0;
         Ok(())
     }
 
@@ -130,12 +172,12 @@ impl InputStream {
     pub fn read_from_str(&mut self, s: &str, e: Option<Encoding>) {
         self.u8_buffer = Vec::from(s.as_bytes());
         self.force_set_encoding(e.unwrap_or(Encoding::UTF8));
-        self.current = 0;
+        self.current_offset = 0;
     }
 
     // Returns the number of characters left in the buffer
     pub(crate) fn chars_left(&self) -> usize {
-        self.length - self.current
+        self.length - self.current_offset
     }
 
     // Reads a character and increases the current pointer
@@ -144,23 +186,29 @@ impl InputStream {
             return None;
         }
 
-        let c = self.buffer[self.current];
-        self.current += 1;
+        let c = self.buffer[self.current_offset];
+        self.current_offset += 1;
+        self.current_line_offset += 1;
+
+        if c == '\n' {
+            self.current_line += 1;
+            self.current_line_offset = 1;
+        }
 
         return Some(c);
     }
 
     pub(crate) fn unread(&mut self) {
-        if self.current > 1 {
-            self.current -= 1;
+        if self.current_offset > 1 {
+            self.current_offset -= 1;
         }
     }
 
     // Looks ahead in the stream, can use an optional index if we want to seek further
     // (or back) in the stream.
-    // @TODO: idx can be pos or neg. But self.current is always positive. This clashes.
+    // @TODO: idx can be pos or neg. But self.current_offset is always positive. This clashes.
     pub(crate) fn look_ahead(&self, idx: i32) -> Option<char> {
-        let c = self.current as i32;
+        let c = self.current_offset as i32;
 
         // Trying to look after the stream
         if c + idx > self.length as i32 {
@@ -236,6 +284,44 @@ mod test {
 
         is.set_confidence(Confidence::Tentative);
         assert_eq!(is.is_certain_encoding(), false);
+    }
+
+    #[test]
+    fn test_offsets() {
+        let mut is = InputStream::new();
+        is.read_from_str("abc\ndefg\n\nhi\njk\nlmno\n\n\npqrst\nu\nv\nw\n\nxy\nz", Some(Encoding::UTF8));
+        assert_eq!(is.length, 40);
+
+        is.seek(7);
+        assert_eq!(is.current_offset, 7);
+        assert_eq!(is.current_line, 2);
+        assert_eq!(is.current_line_offset, 4);
+
+        let c = is.read_char().unwrap();
+        assert_eq!('g', c);
+        assert_eq!(is.current_offset, 8);
+        assert_eq!(is.current_line, 2);
+        assert_eq!(is.current_line_offset, 5);
+
+        is.read_char();
+        assert_eq!(is.current_offset, 9);
+        assert_eq!(is.current_line, 3);
+        assert_eq!(is.current_line_offset, 1);
+
+        is.read_char();
+        assert_eq!(is.current_offset, 10);
+        assert_eq!(is.current_line, 4);
+        assert_eq!(is.current_line_offset, 1);
+
+        is.reset();
+        assert_eq!(is.current_offset, 0);
+        assert_eq!(is.current_line, 1);
+        assert_eq!(is.current_line_offset, 1);
+
+        is.seek(100);
+        assert_eq!(is.current_offset, 39);
+        assert_eq!(is.current_line, 15);
+        assert_eq!(is.current_line_offset, 1);
     }
 
     #[test]
