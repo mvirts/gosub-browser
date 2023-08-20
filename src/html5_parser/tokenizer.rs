@@ -3,6 +3,7 @@ use crate::html5_parser::token::Token;
 use crate::html5_parser::token_states::State;
 
 // Constants that are not directly captured as visible chars
+pub const CHAR_NUL: char = '\u{0000}';
 pub const CHAR_TAB: char = '\u{0009}';
 pub const CHAR_LF: char = '\u{000A}';
 pub const CHAR_FF: char = '\u{000C}';
@@ -14,7 +15,8 @@ pub struct Tokenizer<'a> {
     pub stream: &'a mut InputStream,    // HTML character input stream
     pub state: State,                   // Current state of the tokenizer
     pub consumed: Vec<char>,            // Current consumed characters for current token
-    pub current_attr_name: String,      // Current attribute name that we need to store temporary in case we are parsing attribute values
+    pub current_attr_name: String,      // Current attribute name that we need to store temporary in case we are parsing attributes
+    pub current_attr_value: String,     // Current attribute value that we need to store temporary in case we are parsing attributes
     pub current_token: Option<Token>,   // Token that is currently in the making (if any)
     pub temporary_buffer: Vec<char>,    // Temporary buffer
     pub token_queue: Vec<Token>,        // Queue of emitted tokens. Needed because we can generate multiple tokens during iteration
@@ -26,6 +28,13 @@ pub struct Tokenizer<'a> {
 pub struct Options {
     pub initial_state: State,           // Sets the initial state of the tokenizer. Normally only needed when dealing with tests
     pub last_start_tag: String,         // Sets the last starting tag in the tokenizer. Normally only needed when dealing with tests
+}
+
+macro_rules! to_lowercase {
+    // Converts A-Z to a-z
+    ($c:expr) => {
+        ((($c) as u8) + 0x20) as char
+    };
 }
 
 // Read a character or continues the tokenizer loop.
@@ -53,7 +62,6 @@ macro_rules! read_or_eof {
     };
 }
 
-// Parse error message
 pub struct ParseError {
     message: String,        // Parse message
     line: usize,            // Line number of the error
@@ -102,24 +110,23 @@ impl<'a> Tokenizer<'a> {
 
             match self.state {
                 State::DataState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        '&' => {
-                            self.state = State::CharacterReferenceInDataState;
-                        },
-                        '<' => {
-                            self.state = State::TagOpenState;
-
+                        None => {
+                            // EOF
                             if self.has_consumed_data() {
                                 self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
                                 self.clear_consume_buffer();
                             }
+                            self.token_queue.push(Token::EofToken);
                         },
-                        '\u{0000}' => {
+                        Some('&') => self.state = State::CharacterReferenceInDataState,
+                        Some('<') => self.state = State::TagOpenState,
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL value encountered in data");
+                            self.consume(c.unwrap());
                         }
-                        _ => self.consume(c),
+                        _ => self.consume(c.unwrap()),
                     }
                 }
                 State::CharacterReferenceInDataState => {
@@ -127,21 +134,23 @@ impl<'a> Tokenizer<'a> {
                     self.state = State::DataState;
                 }
                 State::RcDataState => {
-                    let c = read_or_eof!(self);
-                    if self.is_eof {
-                        self.parse_error("End of stream reached");
-                        self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
-                        self.token_queue.push(Token::EofToken);
-                        continue;
-                    }
-
+                    let c = self.stream.read_char();
                     match c {
-                        '&' => self.state = State::CharacterReferenceInRcDataState,
-                        '<' => self.state = State::RcDataLessThanSignState,
-                        '\u{0000}' => {
+                        None => {
+                            // EOF
+                            if self.has_consumed_data() {
+                                self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
+                                self.clear_consume_buffer();
+                            }
+                            self.token_queue.push(Token::EofToken);
+                        },
+                        Some('&') => self.state = State::CharacterReferenceInRcDataState,
+                        Some('<') => self.state = State::RcDataLessThanSignState,
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in RC data");
+                            self.consume(CHAR_REPLACEMENT);
                         }
-                        _ => self.consume(c),
+                        _ => self.consume(c.unwrap()),
                     }
                 }
                 State::CharacterReferenceInRcDataState => {
@@ -150,92 +159,87 @@ impl<'a> Tokenizer<'a> {
                     self.state = State::RcDataState;
                 }
                 State::RawTextState => {
-                    let c = read_or_eof!(self);
-                    if self.is_eof {
-                        self.parse_error("End of stream reached");
-                        self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
-                        self.token_queue.push(Token::EofToken);
-                        continue;
-                    }
-
+                    let c = self.stream.read_char();
                     match c {
-                        '<' => self.state = State::RawTextLessThanSignState,
-                        '\u{0000}' => {
+                        None => {
+                            // EOF
+                            if self.has_consumed_data() {
+                                self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
+                                self.clear_consume_buffer();
+                            }
+                            self.token_queue.push(Token::EofToken);
+                        },
+                        Some('<') => self.state = State::RawTextLessThanSignState,
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in raw text");
                             self.consume(CHAR_REPLACEMENT);
                         }
-                        _ => self.consume(c),
+                        _ => self.consume(c.unwrap()),
                     }
                 }
                 State::ScriptDataState => {
-                    let c = read_or_eof!(self);
-                    if self.is_eof {
-                        self.parse_error("End of stream reached");
-                        self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
-                        self.token_queue.push(Token::EofToken);
-                        continue;
-                    }
-
+                    let c = self.stream.read_char();
                     match c {
-                        '<' => self.state = State::ScriptDataLessThenSignState,
-                        '\u{0000}' => {
+                        None => {
+                            // EOF
+                            if self.has_consumed_data() {
+                                self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
+                                self.clear_consume_buffer();
+                            }
+                            self.token_queue.push(Token::EofToken);
+                        },
+                        Some('<') => self.state = State::ScriptDataLessThenSignState,
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in script data");
                             self.consume(CHAR_REPLACEMENT);
                         }
-                        _ => self.consume(c),
+                        _ => self.consume(c.unwrap()),
                     }
                 }
                 State::PlaintextState => {
-                    let c = read_or_eof!(self);
-                    if self.is_eof {
-                        self.parse_error("End of stream reached");
-                        self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
-                        self.token_queue.push(Token::EofToken);
-                        continue;
-                    }
-
+                    let c = self.stream.read_char();
                     match c {
-                        '\u{0000}' => {
+                        None => {
+                            // EOF
+                            if self.has_consumed_data() {
+                                self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
+                                self.clear_consume_buffer();
+                            }
+                            self.token_queue.push(Token::EofToken);
+                        },
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in plain text stream");
                             self.consume(CHAR_REPLACEMENT);
                         }
-                        _ => self.consume(c),
+                        _ => self.consume(c.unwrap()),
                     }
                 }
                 State::TagOpenState => {
-                    let c = read_or_eof!(self);
-                    if self.is_eof {
-                        self.parse_error("unexpected EOF encountered during tag opening");
-                        self.consume('<');
-                        self.stream.unread();
-                        self.state = State::DataState;
-                        continue;
-                    }
-
+                    let c = self.stream.read_char();
                     match c {
-                        '!' => self.state = State::MarkupDeclarationOpenState,
-                        '/' => self.state = State::EndTagOpenState,
-                        'A'..='Z' => {
+                        Some('!') => self.state = State::MarkupDeclarationOpenState,
+                        Some('/') => self.state = State::EndTagOpenState,
+                        Some(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::StartTagToken{
                                 name: "".into(),
                                 is_self_closing: false,
                                 attributes: vec![],
                             });
 
-                            self.consume(((c as u8) + 0x20) as char);
+                            self.current_token.unwrap().name.push(to_lowercase!(ch));
                             self.state = State::TagNameState;
                         },
-                        'a'..='z' => {
+                        Some(ch @ 'a'..='z') => {
                             self.current_token = Some(Token::StartTagToken{
                                 name: "".into(),
                                 is_self_closing: false,
                                 attributes: vec![],
                             });
 
-                            self.consume(c);
+                            self.current_token.unwrap().name.push(ch);
                             self.state = State::TagNameState;
                         }
-                        '?' => {
+                        Some('?') => {
                             self.parse_error("question mark encountered during tag opening");
                             self.state = State::BogusCommentState;
                         }
@@ -248,72 +252,63 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::EndTagOpenState => {
-                    let c = match self.stream.read_char() {
-                        Some(c) => c,
+                    let c = self.stream.read_char();
+                    match c {
                         None => {
                             self.parse_error("End of stream reached");
                             self.consume('<');
                             self.consume('/');
-
                             self.state = State::DataState;
-                            continue;
-                        }
-                    };
+                        },
+                        Some(ch @ 'A'..='Z') => {
+                            self.current_token = Some(Token::EndTagToken{
+                                name: "".into(),
+                            });
 
-                    match c {
-                        'A'..='Z' => {
-                            // consume lower case
-                            self.consume(((c as u8) + 0x20) as char);
+                            self.current_token.unwrap().name.push(ch.to_lowercase());
                             self.state = State::TagNameState;
                         },
-                        'a'..='z' => {
-                            self.consume(c);
+                        Some(ch @ 'a'..='z') => {
+                            self.current_token.unwrap().name.push(ch);
                             self.state = State::TagNameState;
                         }
-                        '>' => {
-                            self.parse_error("unexpected > encountered during tag opening");
+                        Some('>') => {
+                            self.parse_error("unexpected > encountered during end tag opening");
                             self.state = State::DataState;
                         }
                         _ => {
-                            self.parse_error("unexpected character encountered during tag opening");
+                            self.parse_error("unexpected character encountered during end tag opening");
                             self.state = State::BogusCommentState;
                         }
                     }
                 }
                 State::TagNameState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
-                            self.set_name_in_current_token(self.get_consumed_str());
-                            self.state = State::BeforeAttributeNameState;
-                        },
-                        '/' => {
-                            self.set_name_in_current_token(self.get_consumed_str());
-                            self.state = State::SelfClosingStartState;
-                        },
-                        '>' => {
-                            self.set_name_in_current_token(self.get_consumed_str());
+                        None => {
 
-                            self.clear_consume_buffer();
+                        },
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => self.state = State::BeforeAttributeNameState,
+                        Some('/') => self.state = State::SelfClosingStartState,
+                        Some('>') => {
                             self.push_current_token_to_queue();
                             self.state = State::DataState;
                         },
-                        '\u{0000}' => {
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in tag name");
-                            self.consume(CHAR_REPLACEMENT);
+                            self.current_token.unwrap().name.push(CHAR_REPLACEMENT);
                         },
-                        'A'..='Z' => {
-                            self.consume(((c as u8) + 0x20) as char);
-                        }
-                        _ => self.consume(c),
+                        Some(ch @ 'A'..='Z') => self.current_token.unwrap().name.push(to_lowercase!(ch)),
+                        _ => self.current_token.unwrap().name.push(c),
                     }
                 }
                 State::RcDataLessThanSignState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        '/' => {
+                        Some('/') => {
                             self.temporary_buffer = vec![];
                             self.state = State::RcDataEndTagOpenState;
                         },
@@ -325,21 +320,20 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RcDataEndTagOpenState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        'A'..='Z' => {
+                        Some(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
                             });
-                            self.temporary_buffer.push(((c as u8) + 0x20) as char);
+                            self.temporary_buffer.push(to_lowercase!(c.unwrap()));
                             self.state = State::RcDataEndTagNameState;
                         },
-                        'a'..='z' => {
+                        Some(ch @ 'a'..='z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
                             });
-                            self.temporary_buffer.push(c);
+                            self.temporary_buffer.push(c.unwrap());
                             self.state = State::RcDataEndTagNameState;
                         }
                         _ => {
@@ -351,43 +345,46 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RcDataEndTagNameState => {
-                    let c = read_or_eof!(self);
+                    let c = self.stream.read_char();
 
                     // we use this flag because a lot of matches will actually do the same thing
                     let mut consume_anything_else = false;
 
                     match c {
-                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
                             if self.is_appropriate_end_token(&self.temporary_buffer) {
                                 self.state = State::BeforeAttributeNameState;
                             } else {
                                 consume_anything_else = true;
                             }
                         },
-                        '/' => {
+                        Some('/') => {
                             if self.is_appropriate_end_token(&self.temporary_buffer) {
                                 self.state = State::SelfClosingStartState;
                             } else {
                                 consume_anything_else = true;
                             }
                         },
-                        '>' => {
+                        Some('>') => {
                             if self.is_appropriate_end_token(&self.temporary_buffer) {
                                 let s: String = self.temporary_buffer.iter().collect::<String>();
                                 self.set_name_in_current_token(s);
 
-                                self.clear_consume_buffer();
+                                // self.clear_consume_buffer();
                                 self.push_current_token_to_queue();
                                 self.state = State::DataState;
                             } else {
                                 consume_anything_else = true;
                             }
                         },
-                        'A'..='Z' => {
-                            self.temporary_buffer.push(((c as u8) + 0x20) as char);
+                        Some(ch @ 'A'..='Z') => {
+                            self.temporary_buffer.push(to_lowercase!(ch));
                         }
-                        'a'..='z' => {
-                            self.temporary_buffer.push(c);
+                        Some(ch @ 'a'..='z') => {
+                            self.temporary_buffer.push(ch);
                         }
                         _ => {
                             consume_anything_else = true;
@@ -407,10 +404,9 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RawTextLessThanSignState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        '/' => {
+                        Some('/') => {
                             self.temporary_buffer = vec![];
                             self.state = State::RawTextEndTagOpenState;
                         },
@@ -422,22 +418,23 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RawTextEndTagOpenState => {
-                    let c = read_or_eof!(self);
-
-                    self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
+                    let c = self.stream.read_char();
+                    // self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
 
                     match c {
-                        'A'..='Z' => {
+                        Some(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
                             });
-                            self.temporary_buffer.push(((c as u8) + 0x20) as char);
+                            self.current_token.unwrap().name.push(to_lowercase!(ch));
+                            self.temporary_buffer.push(to_lowercase!(ch));
                             self.state = State::RawTextEndTagNameState;
                         },
-                        'a'..='z' => {
+                        Some(ch @ 'a'..='z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
                             });
+                            self.current_token.unwrap().name.push(to_lowercase!(ch));
                             self.temporary_buffer.push(c);
                             self.state = State::RawTextEndTagNameState;
                         }
@@ -450,28 +447,32 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RawTextEndTagNameState => {
-                    let c = read_or_eof!(self);
+                    let c = self.stream.read_char();
 
                     // we use this flag because a lot of matches will actually do the same thing
                     let mut consume_anything_else = false;
 
                     match c {
-                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
                             if self.is_appropriate_end_token(&self.temporary_buffer) {
                                 self.state = State::BeforeAttributeNameState;
                             } else {
                                 consume_anything_else = true;
                             }
                         },
-                        '/' => {
+                        Some('/') => {
                             if self.is_appropriate_end_token(&self.temporary_buffer) {
                                 self.state = State::SelfClosingStartState;
                             } else {
                                 consume_anything_else = true;
                             }
                         },
-                        '>' => {
+                        Some('>') => {
                             if self.is_appropriate_end_token(&self.temporary_buffer) {
+
                                 let s: String = self.temporary_buffer.iter().collect::<String>();
                                 self.set_name_in_current_token(s);
 
@@ -482,11 +483,13 @@ impl<'a> Tokenizer<'a> {
                                 consume_anything_else = true;
                             }
                         },
-                        'A'..='Z' => {
-                            self.temporary_buffer.push(((c as u8) + 0x20) as char);
-                        }
-                        'a'..='z' => {
+                        Some(ch @ 'A'..='Z') => {
+                            self.current_token.unwrap().name.push(to_lowercase!(ch));
                             self.temporary_buffer.push(c);
+                        }
+                        Some(ch @ 'a'..='z') => {
+                            self.current_token.unwrap().name.push(ch);
+                            self.temporary_buffer.push(ch);
                         }
                         _ => {
                             consume_anything_else = true;
@@ -504,7 +507,6 @@ impl<'a> Tokenizer<'a> {
                         self.stream.unread();
                         self.state = State::RawTextState;
                     }
-
                 }
                 // State::ScriptDataLessThenSignState => {}
                 // State::ScriptDataEndTagOpenState => {}
@@ -523,252 +525,334 @@ impl<'a> Tokenizer<'a> {
                 // State::ScriptDataDoubleEscapedLessThanSignState => {}
                 // State::ScriptDataDoubleEscapeEndState => {}
                 State::BeforeAttributeNameState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
-                            // Ignore
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
+                            // Ignore character
                         },
-                        '/' => self.state = State::SelfClosingStartState,
-                        '>' => {
-                            self.clear_consume_buffer();
+                        Some('/') => self.state = State::SelfClosingStartState,
+                        Some('>') => {
                             self.push_current_token_to_queue();
                             self.state = State::DataState;
                         },
-                        'A'..='Z' => {
-                            // consume lower case
-                            self.consume(((c as u8) + 0x20) as char);
+                        Some(ch @ 'A'..='Z') => {
+                            self.current_attr_name.clear();
+                            self.current_attr_name.push(to_lowercase!(ch));
+                            self.current_attr_value = String::new();
                             self.state = State::AttributeNameState;
                         },
-                        '\u{0000}' => {
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered while starting attribute name");
-                            // @TODO: push attribute name is CHAR_REPLACEMENT and value = null
+                            self.current_attr_name.push(CHAR_REPLACEMENT);
+                            self.current_attr_value = String::new();
+                            self.state = State::AttributeNameState;
                         },
-                        '"' | '\'' | '<' | '=' => {
+                        Some('"') | Some('\'') | Some('<') | Some('=') => {
                             self.parse_error("unexpected token found when starting attribute name");
-                            // Start new attribute in current tag, set` name to 'c'
-                            self.consume(c);
+
+                            self.current_attr_name.clear();
+                            self.current_attr_name.push(c.unwrap());
+                            self.current_attr_value = String::new();
                             self.state = State::AttributeNameState;
                         }
+                        None => {
+                            self.parse_error("unexpected end of stream detected");
+                            self.state = State::DataState;
+                        },
                         _ => {
-                            // Start new attribute in current tag, set name to 'c'
-                            self.consume(c);
+                            self.current_attr_name.clear();
+                            self.current_attr_name.push(c.unwrap());
+                            self.current_attr_value = String::new();
                             self.state = State::AttributeNameState;
                         },
                     }
                 }
                 State::AttributeNameState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
-                            self.current_attr_name = self.get_consumed_str();
-                            self.clear_consume_buffer();
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
+                            self.check_if_attr_already_exists();
                             self.state = State::AfterAttributeNameState
                         },
-                        '/' => {
-                            self.set_add_attribute_to_current_token(
-                                self.current_attr_name.clone(),
-                                self.get_consumed_str()
-                            );
-                            self.clear_consume_buffer();
+                        Some('/') => {
+                            self.check_if_attr_already_exists();
                             self.state = State::SelfClosingStartState
                         },
-                        '=' => {
-                            self.current_attr_name = self.get_consumed_str();
-                            self.clear_consume_buffer();
-                            // TODO: set consumed to attribute name
-                            self.state = State::BeforeAttributeValueState;
+                        Some('=') => {
+                            self.check_if_attr_already_exists();
+                            self.state = State::BeforeAttributeValueState
                         },
-                        '>' => {
-                            self.set_add_attribute_to_current_token(
-                                self.get_consumed_str(),
-                                String::from(""),
-                            );
-                            self.clear_consume_buffer();
+                        Some('>') => {
+                            self.check_if_attr_already_exists();
                             self.push_current_token_to_queue();
                             self.state = State::DataState;
-                        }
-                        '\u{0000}' => {
+                        },
+                        Some(ch @ 'A'..='Z') => {
+                            self.current_attr_name.push(to_lowercase!(ch));
+                        },
+                        Some(CHAR_NUL)  => {
                             self.parse_error("NUL encountered in attribute name");
-                            self.consume(CHAR_REPLACEMENT);
+                            self.current_attr_name.push(CHAR_REPLACEMENT);
                         },
-                        'A'..='Z' => {
-                            self.consume(((c as u8) + 0x20) as char);
-                        },
-                        '"' | '\'' | '<' => {
+                        Some('"') | Some('\'') | Some('<') => {
                             self.parse_error("unexpected token found when starting attribute name");
-                            self.consume(c);
+                            self.current_attr_name.push(c.unwrap());
+                        },
+                        None() => {
+                            self.parse_error("unexpected EOF");
+                            self.state = State::DataState;
                         }
-                        _ => self.consume(c),
+                        _ => self.current_attr_name.push(c.unwrap()),
                     }
                 }
-                State::BeforeAttributeValueState => {
-                    let c = read_or_eof!(self);
-
+                State::AfterAttributeNameState => {
+                    let c = self.stream.read_char();
                     match c {
-                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
                             // Ignore
                         },
-                        '"' => self.state = State::AttributeValueDoubleQuotedState,
-                        '&' => {
+                        Some('\'') => self.state = State::SelfClosingStartState,
+                        Some('=') => self.state = State::BeforeAttributeValueState,
+                        Some('>') => {
+                            self.state = State::DataState;
+                            self.push_current_token_to_queue();
+                        }
+                        Some(ch @ 'A'..='Z') => {
+                            self.current_attr_name.clear();
+                            self.current_attr_name.push(to_lowercase!(ch));
+                            self.current_attr_value = "";
+                            self.state = State::AttributeNameState;
+                        }
+                        Some(CHAR_NUL) => {
+                            self.parse_error("unexpected NUL encountered in after attribute name state");
+                            self.current_attr_name.clear();
+                            self.current_attr_name.push(CHAR_REPLACEMENT);
+                            self.current_attr_value = "";
+                            self.state = State::AttributeNameState;
+                        },
+                        Some('"') | Some('\'') | Some('<') => {
+                            self.parse_error("unexpected character encountered in after attribute name state");
+                            self.current_attr_name.clear();
+                            self.current_attr_name.push(c.unwrap());
+                            self.current_attr_value = "";
+                        }
+                        None() {
+                            self.parse_error("unexpected EOF encountered");
+                            self.state = State::DataState;
+                        },
+                        _ => {
+                            self.current_attr_name.clear();
+                            self.current_attr_name.push(c.unwrap());
+                            self.current_attr_value = "";
+                            self.state = State::AttributeNameState;
+                        },
+                    }
+
+                    // let c = self.stream.read_char();
+                    // match c {
+                    //     Some(CHAR_TAB) |
+                    //     Some(CHAR_LF) |
+                    //     Some(CHAR_FF) |
+                    //     Some(CHAR_SPACE) => {
+                    //         // Ignore
+                    //     },
+                    //     Some('\'') => self.state = State::AttributeValueSingleQuotedState,
+                    //     Some('=') => self.state = State::BeforeAttributeValueState,
+                    //     Some('>') => {
+                    //         self.state = State::DataState;
+                    //         self.push_current_token_to_queue();
+                    //     }
+                    //     Some(ch @ 'A'..='Z') => {
+                    //         self.current_attr_name.clear();
+                    //         self.current_attr_name.push(to_lowercase!(ch));
+                    //         self.current_attr_value = "";
+                    //         self.state = State::AttributeNameState;
+                    //     }
+                    //     Some(CHAR_NUL) => {
+                    //         self.parse_error("unexpected NUL encountered in after attribute name state");
+                    //         self.current_attr_name.clear();
+                    //         self.current_attr_name.push(CHAR_REPLACEMENT);
+                    //         self.current_attr_value = "";
+                    //         self.state = State::AttributeNameState;
+                    //     },
+                    //     Some('"') | Some('\'') | Some('<') => {
+                    //         self.parse_error("unexpected character encountered in after attribute name state");
+                    //         self.current_attr_name.clear();
+                    //         self.current_attr_name.push(c.unwrap());
+                    //         self.current_attr_value = "";
+                    //     }
+                    //     None() {
+                    //         self.parse_error("unexpected EOF encountered");
+                    //         self.state = State::DataState;
+                    //     },
+                    //     _ => {
+                    //         self.current_attr_name.clear();
+                    //         self.current_attr_name.push(c.unwrap());
+                    //         self.current_attr_value = "";
+                    //         self.state = State::AttributeNameState;
+                    //     },
+                    //
+                    // }
+                },
+                State::BeforeAttributeValueState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
+                            // Ignore
+                        },
+                        Some('"') => self.state = State::AttributeValueDoubleQuotedState,
+                        Some('&') => {
                             self.stream.unread();
                             self.state = State::AttributeValueUnquotedState;
                         },
-                        '\'' => {
+                        Some('\'') => {
                             self.state = State::AttributeValueSingleQuotedState;
                         }
-                        '\u{0000}' => {
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered before attribute value");
-                            self.consume(CHAR_REPLACEMENT);
+                            self.current_attr_value.push(CHAR_REPLACEMENT);
                             self.state = State::AttributeValueUnquotedState;
                         },
-                        '>' => {
+                        Some('>') => {
                             self.parse_error("unexpected > encountered in before attribute value state");
-                            self.set_name_in_current_token(self.get_consumed_str());
                             self.push_current_token_to_queue();
                             self.state = State::DataState;
                         },
-                        '<' | '=' | '`' => {
+                        Some('<') | Some('=') | Some('`') => {
                             self.parse_error("unexpected character encountered in before attribute value state");
-                            self.consume(c);
+                            self.current_attr_value.push(c.unwrap());
                             self.state = State::AttributeValueUnquotedState;
                         }
+                        None => {
+                            self.parse_error("unexpected EOF");
+                            self.state = State::DataState;
+                        },
                         _ => {
-                            self.consume(c);
+                            self.current_attr_value.push(c.unwrap());
                             self.state = State::AttributeValueUnquotedState;
                         },
                     }
                 }
                 State::AttributeValueDoubleQuotedState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        '"' => {
-                            self.set_add_attribute_to_current_token(
-                                self.current_attr_name.clone(),
-                                self.get_consumed_str()
-                            );
-                            self.clear_consume_buffer();
-                            self.state = State::AfterAttributeValueQuotedState
-                        },
-                        '&' => {
-                            _ = self.consume_character_reference(Some('"'), true);
-                        },
-                        '\u{0000}' => {
+                        Some('"') => self.state = State::AfterAttributeValueQuotedState
+                        Some('&') => self.consume_character_reference(Some('"'), true),
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in attribute value");
-                            self.consume(CHAR_REPLACEMENT);
+                            self.current_attr_value.push(CHAR_REPLACEMENT);
+                        },
+                        None => {
+                            self.parse_error("Unexpected EOF");
+                            self.state = State::DataState;
                         },
                         _ => {
-                            self.consume(c);
+                            self.current_attr_value.push(c.unwrap());
                         },
                     }
                 }
                 State::AttributeValueSingleQuotedState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        '\'' => {
-                            self.set_add_attribute_to_current_token(
-                                self.current_attr_name.clone(),
-                                self.get_consumed_str()
-                            );
-                            self.clear_consume_buffer();
-                            self.state = State::AfterAttributeValueQuotedState
-                        },
-                        '&' => {
-                            _ = self.consume_character_reference(Some('\''), true);
-                        },
-                        '\u{0000}' => {
+                        Some('\'') => self.state = State::AfterAttributeValueQuotedState
+                        Some('&') => self.consume_character_reference(Some('\''), true),
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in attribute value");
-                            self.consume(CHAR_REPLACEMENT);
+                            self.current_attr_value.push(CHAR_REPLACEMENT);
+                        },
+                        None => {
+                            self.parse_error("Unexpected EOF");
+                            self.state = State::DataState;
                         },
                         _ => {
-                            self.consume(c);
+                            self.current_attr_value.push(c.unwrap());
                         },
                     }
                 }
                 State::AttributeValueUnquotedState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
-                            self.set_add_attribute_to_current_token(
-                                self.current_attr_name.clone(),
-                                self.get_consumed_str()
-                            );
-                            self.clear_consume_buffer();
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
                             self.state = State::BeforeAttributeNameState;
                         },
-                        '&' => {
-                            _ = self.consume_character_reference(Some('>'), true);
-                        },
-                        '>' => {
-                            self.set_add_attribute_to_current_token(
-                                self.current_attr_name.clone(),
-                                self.get_consumed_str()
-                            );
-                            self.clear_consume_buffer();
+                        Some('&') => self.consume_character_reference(Some('>'), true),
+                        Some('>') => {
                             self.push_current_token_to_queue();
                             self.state = State::DataState;
                         },
-                        '\u{0000}' => {
+                        Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in attribute value");
-                            self.consume(CHAR_REPLACEMENT);
+                            self.current_attr_value.push(CHAR_REPLACEMENT);
                         },
-                        '"' | '\'' | '<' | '=' | '`' => {
+                        Some('"') | Some('\'') | Some('<') | Some('=') | Some('`') => {
                             self.parse_error("unexpected character in attribute value encountered");
-                            self.consume(c);
+                            self.current_attr_value.push(c.unwrap());
                         }
+                        None => {
+                            self.parse_error("unexpected EOF");
+                            self.state = State::DataState;
+                        },
                         _ => {
-                            self.consume(c);
+                            self.current_attr_value.push(c.unwrap());
                         },
                     }
 
                 }
                 // State::CharacterReferenceInAttributeValueState => {}
                 State::AfterAttributeValueQuotedState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        CHAR_TAB | CHAR_LF | CHAR_FF | CHAR_SPACE => {
-                            self.state = State::BeforeAttributeNameState
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => self.state = State::BeforeAttributeNameState
+                        Some('\'') => self.state = State::SelfClosingStartState,
+                        Some('>') => {
+                            self.push_current_token_to_queue();
+                            self.state = State::DataState;
                         },
-                        '\'' => self.state = State::SelfClosingStartState,
-                        '>' => {
-                            // self.set_add_attribute_to_current_token(self.current_attr_name.clone(), self.get_consumed_str());
-                            self.current_token = None;
+                        None => {
+                            self.parse_error("unexpected EOF");
                             self.state = State::DataState;
                         },
                         _ => {
                             self.parse_error("unexpected character encountered in the after attribute value state");
-                            self.state = State::BeforeAttributeNameState;
                             self.stream.unread();
+                            self.state = State::BeforeAttributeNameState;
                         },
                     }
                 }
                 State::SelfClosingStartState => {
-                    let c = read_or_eof!(self);
-
+                    let c = self.stream.read_char();
                     match c {
-                        '>' => {
-                            // self.set_name_in_current_token(self.get_consumed_str());
+                        Some('>') => {
                             self.set_is_closing_in_current_token(true);
                             self.push_current_token_to_queue();
                             self.state = State::DataState;
                         }
-                        '\u{0000}' => {
-                            self.parse_error("NUL encountered in attribute name");
-                            self.consume(CHAR_REPLACEMENT);
+                        None => {
+                            self.parse_error("unexpected EOF");
+                            self.state = State::DataState;
                         },
-                        'A'..='Z' => {
-                            self.consume(((c as u8) + 0x20) as char);
+                        _ => {
+                            self.parse_error("unexpected character. Expecting a >");
+                            self.state = State::BeforeAttributeNameState;
                         },
-                        '"' | '\'' | '<' => {
-                            self.parse_error("unexpected token found when starting attribute name");
-                            self.consume(c);
-                        }
-                        _ => self.consume(c),
                     }
                 }
                 // State::BogusCommentState => {}
