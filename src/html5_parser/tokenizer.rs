@@ -17,6 +17,7 @@ pub struct Tokenizer<'a> {
     pub consumed: Vec<char>,            // Current consumed characters for current token
     pub current_attr_name: String,      // Current attribute name that we need to store temporary in case we are parsing attributes
     pub current_attr_value: String,     // Current attribute value that we need to store temporary in case we are parsing attributes
+    pub ignore_attribute: bool,         // The currently parsed attribute is to be ignored once completed (because it already exists on the current token)
     pub current_token: Option<Token>,   // Token that is currently in the making (if any)
     pub temporary_buffer: Vec<char>,    // Temporary buffer
     pub token_queue: Vec<Token>,        // Queue of emitted tokens. Needed because we can generate multiple tokens during iteration
@@ -30,35 +31,21 @@ pub struct Options {
     pub last_start_tag: String,         // Sets the last starting tag in the tokenizer. Normally only needed when dealing with tests
 }
 
+macro_rules! add_to_token_name {
+    ($self:expr, $c:expr) => {
+        match &mut $self.current_token {
+            Some(Token::StartTagToken {name, ..}) => {
+                name.push($c);
+            }
+            _ => {},
+        }
+    }
+}
+
 macro_rules! to_lowercase {
     // Converts A-Z to a-z
     ($c:expr) => {
         ((($c) as u8) + 0x20) as char
-    };
-}
-
-// Read a character or continues the tokenizer loop.
-macro_rules! read_or_eof {
-    ($self:expr) => {
-        match $self.stream.read_char() {
-            Some(c) => c,
-            None => {
-                $self.parse_error("End of stream reached");
-
-                println!("temp buf len: {} ", $self.temporary_buffer.len());
-                if $self.temporary_buffer.len() > 0 {
-                    let s = $self.temporary_buffer.iter().collect();
-                    $self.consume_string(s);
-                }
-
-                if $self.has_consumed_data() {
-                    $self.token_queue.push(Token::TextToken { value: $self.get_consumed_str().clone() });
-                    $self.clear_consume_buffer();
-                }
-                $self.token_queue.push(Token::EofToken);
-                continue;
-            }
-        }
     };
 }
 
@@ -80,9 +67,11 @@ impl<'a> Tokenizer<'a> {
             current_token: None,
             token_queue: vec![],
             current_attr_name: String::new(),
+            current_attr_value: String::new(),
             temporary_buffer: vec![],
             errors: vec![],
             is_eof: false,
+            ignore_attribute: false,
         };
     }
 
@@ -226,7 +215,7 @@ impl<'a> Tokenizer<'a> {
                                 attributes: vec![],
                             });
 
-                            self.current_token.unwrap().name.push(to_lowercase!(ch));
+                            add_to_token_name!(self, to_lowercase!(ch));
                             self.state = State::TagNameState;
                         },
                         Some(ch @ 'a'..='z') => {
@@ -236,7 +225,7 @@ impl<'a> Tokenizer<'a> {
                                 attributes: vec![],
                             });
 
-                            self.current_token.unwrap().name.push(ch);
+                            add_to_token_name!(self, ch);
                             self.state = State::TagNameState;
                         }
                         Some('?') => {
@@ -265,11 +254,11 @@ impl<'a> Tokenizer<'a> {
                                 name: "".into(),
                             });
 
-                            self.current_token.unwrap().name.push(ch.to_lowercase());
+                            add_to_token_name!(self, to_lowercase!(ch));
                             self.state = State::TagNameState;
                         },
                         Some(ch @ 'a'..='z') => {
-                            self.current_token.unwrap().name.push(ch);
+                            add_to_token_name!(self, ch);
                             self.state = State::TagNameState;
                         }
                         Some('>') => {
@@ -299,10 +288,10 @@ impl<'a> Tokenizer<'a> {
                         },
                         Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in tag name");
-                            self.current_token.unwrap().name.push(CHAR_REPLACEMENT);
+                            add_to_token_name!(self, CHAR_REPLACEMENT);
                         },
-                        Some(ch @ 'A'..='Z') => self.current_token.unwrap().name.push(to_lowercase!(ch)),
-                        _ => self.current_token.unwrap().name.push(c),
+                        Some(ch @ 'A'..='Z') => add_to_token_name!(self, to_lowercase!(ch)),
+                        _ => add_to_token_name!(self, c.unwrap()),
                     }
                 }
                 State::RcDataLessThanSignState => {
@@ -326,14 +315,14 @@ impl<'a> Tokenizer<'a> {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
                             });
-                            self.temporary_buffer.push(to_lowercase!(c.unwrap()));
+                            self.temporary_buffer.push(to_lowercase!(ch));
                             self.state = State::RcDataEndTagNameState;
                         },
                         Some(ch @ 'a'..='z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
                             });
-                            self.temporary_buffer.push(c.unwrap());
+                            self.temporary_buffer.push(ch);
                             self.state = State::RcDataEndTagNameState;
                         }
                         _ => {
@@ -373,7 +362,6 @@ impl<'a> Tokenizer<'a> {
                                 let s: String = self.temporary_buffer.iter().collect::<String>();
                                 self.set_name_in_current_token(s);
 
-                                // self.clear_consume_buffer();
                                 self.push_current_token_to_queue();
                                 self.state = State::DataState;
                             } else {
@@ -419,14 +407,12 @@ impl<'a> Tokenizer<'a> {
                 }
                 State::RawTextEndTagOpenState => {
                     let c = self.stream.read_char();
-                    // self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
-
                     match c {
                         Some(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
                             });
-                            self.current_token.unwrap().name.push(to_lowercase!(ch));
+                            // add_to_token_name!(self, to_lowercase!(ch));
                             self.temporary_buffer.push(to_lowercase!(ch));
                             self.state = State::RawTextEndTagNameState;
                         },
@@ -434,8 +420,8 @@ impl<'a> Tokenizer<'a> {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
                             });
-                            self.current_token.unwrap().name.push(to_lowercase!(ch));
-                            self.temporary_buffer.push(c);
+                            // add_to_token_name!(self, ch);
+                            self.temporary_buffer.push(ch);
                             self.state = State::RawTextEndTagNameState;
                         }
                         _ => {
@@ -472,11 +458,9 @@ impl<'a> Tokenizer<'a> {
                         },
                         Some('>') => {
                             if self.is_appropriate_end_token(&self.temporary_buffer) {
-
                                 let s: String = self.temporary_buffer.iter().collect::<String>();
                                 self.set_name_in_current_token(s);
 
-                                self.clear_consume_buffer();
                                 self.push_current_token_to_queue();
                                 self.state = State::DataState;
                             } else {
@@ -484,11 +468,11 @@ impl<'a> Tokenizer<'a> {
                             }
                         },
                         Some(ch @ 'A'..='Z') => {
-                            self.current_token.unwrap().name.push(to_lowercase!(ch));
-                            self.temporary_buffer.push(c);
+                            // add_to_token_name!(self, to_lowercase!(ch));
+                            self.temporary_buffer.push(to_lowercase!(ch));
                         }
                         Some(ch @ 'a'..='z') => {
-                            self.current_token.unwrap().name.push(ch);
+                            // add_to_token_name!(self, ch);
                             self.temporary_buffer.push(ch);
                         }
                         _ => {
@@ -604,7 +588,7 @@ impl<'a> Tokenizer<'a> {
                             self.parse_error("unexpected token found when starting attribute name");
                             self.current_attr_name.push(c.unwrap());
                         },
-                        None() => {
+                        None => {
                             self.parse_error("unexpected EOF");
                             self.state = State::DataState;
                         }
@@ -620,7 +604,7 @@ impl<'a> Tokenizer<'a> {
                         Some(CHAR_SPACE) => {
                             // Ignore
                         },
-                        Some('\'') => self.state = State::SelfClosingStartState,
+                        Some('/') => self.state = State::SelfClosingStartState,
                         Some('=') => self.state = State::BeforeAttributeValueState,
                         Some('>') => {
                             self.state = State::DataState;
@@ -629,30 +613,30 @@ impl<'a> Tokenizer<'a> {
                         Some(ch @ 'A'..='Z') => {
                             self.current_attr_name.clear();
                             self.current_attr_name.push(to_lowercase!(ch));
-                            self.current_attr_value = "";
+                            self.current_attr_value = String::new();
                             self.state = State::AttributeNameState;
                         }
                         Some(CHAR_NUL) => {
                             self.parse_error("unexpected NUL encountered in after attribute name state");
                             self.current_attr_name.clear();
                             self.current_attr_name.push(CHAR_REPLACEMENT);
-                            self.current_attr_value = "";
+                            self.current_attr_value = String::new();
                             self.state = State::AttributeNameState;
                         },
                         Some('"') | Some('\'') | Some('<') => {
                             self.parse_error("unexpected character encountered in after attribute name state");
                             self.current_attr_name.clear();
                             self.current_attr_name.push(c.unwrap());
-                            self.current_attr_value = "";
+                            self.current_attr_value = String::new();
                         }
-                        None() {
+                        None => {
                             self.parse_error("unexpected EOF encountered");
                             self.state = State::DataState;
                         },
                         _ => {
                             self.current_attr_name.clear();
                             self.current_attr_name.push(c.unwrap());
-                            self.current_attr_value = "";
+                            self.current_attr_value = String::new();
                             self.state = State::AttributeNameState;
                         },
                     }
@@ -748,8 +732,8 @@ impl<'a> Tokenizer<'a> {
                 State::AttributeValueDoubleQuotedState => {
                     let c = self.stream.read_char();
                     match c {
-                        Some('"') => self.state = State::AfterAttributeValueQuotedState
-                        Some('&') => self.consume_character_reference(Some('"'), true),
+                        Some('"') => self.state = State::AfterAttributeValueQuotedState,
+                        Some('&') => _ = self.consume_character_reference(Some('"'), true),
                         Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in attribute value");
                             self.current_attr_value.push(CHAR_REPLACEMENT);
@@ -766,8 +750,8 @@ impl<'a> Tokenizer<'a> {
                 State::AttributeValueSingleQuotedState => {
                     let c = self.stream.read_char();
                     match c {
-                        Some('\'') => self.state = State::AfterAttributeValueQuotedState
-                        Some('&') => self.consume_character_reference(Some('\''), true),
+                        Some('\'') => self.state = State::AfterAttributeValueQuotedState,
+                        Some('&') => _ = self.consume_character_reference(Some('\''), true),
                         Some(CHAR_NUL) => {
                             self.parse_error("NUL encountered in attribute value");
                             self.current_attr_value.push(CHAR_REPLACEMENT);
@@ -790,7 +774,7 @@ impl<'a> Tokenizer<'a> {
                         Some(CHAR_SPACE) => {
                             self.state = State::BeforeAttributeNameState;
                         },
-                        Some('&') => self.consume_character_reference(Some('>'), true),
+                        Some('&') => _ = self.consume_character_reference(Some('>'), true),
                         Some('>') => {
                             self.push_current_token_to_queue();
                             self.state = State::DataState;
@@ -820,7 +804,7 @@ impl<'a> Tokenizer<'a> {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
                         Some(CHAR_FF) |
-                        Some(CHAR_SPACE) => self.state = State::BeforeAttributeNameState
+                        Some(CHAR_SPACE) => self.state = State::BeforeAttributeNameState,
                         Some('\'') => self.state = State::SelfClosingStartState,
                         Some('>') => {
                             self.push_current_token_to_queue();
@@ -973,8 +957,6 @@ impl<'a> Tokenizer<'a> {
             },
             _ => panic!("trying to set the name of a non start/end tag token")
         }
-
-        self.clear_consume_buffer();
     }
 
     // Pushes a token to the stack
@@ -999,6 +981,13 @@ impl<'a> Tokenizer<'a> {
                 },
                 _ => {}
             }
+        }
+
+        // If there is any consumed data, emit this first as a text token
+        if self.has_consumed_data() {
+            self.push_token_to_queue(&Token::TextToken{
+                value: self.get_consumed_str(),
+            })
         }
 
         // We are cloning the current token before we send it to the token_queue. This might be inefficient.
@@ -1040,6 +1029,24 @@ impl<'a> Tokenizer<'a> {
         }
 
         self.token_queue.push(Token::EofToken);
+    }
+
+
+    // This function checks to see if there is already an attribute name like the one in current_attr_name.
+    fn check_if_attr_already_exists(&mut self) {
+        self.ignore_attribute = false;
+
+        match &mut self.current_token {
+            Some(Token::StartTagToken { attributes, .. }) => {
+                for (name, ..) in attributes {
+                    if name.clone() == self.current_attr_name {
+                        self.ignore_attribute = true;
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
