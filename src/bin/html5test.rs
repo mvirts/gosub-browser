@@ -95,7 +95,7 @@ fn run_token_test(test: &Test)
 
         let mut is = InputStream::new();
         is.read_from_str(test.input.as_str(), None);
-        let mut tkznr = Tokenizer::new(&mut is, Some(Options{
+        let mut tknzr = Tokenizer::new(&mut is, Some(Options{
             initial_state: state,
             last_start_tag: last_start_tag.clone(),
         }));
@@ -103,13 +103,27 @@ fn run_token_test(test: &Test)
         // There can be multiple tokens to match. Make sure we match all of them
         for expected_token in test.output.iter() {
             // println!("Trying to match output");
-            let t = tkznr.next_token();
+            let t = tknzr.next_token();
             // println!("Token: {}", t);
             match_token(t, expected_token);
+
+            if test.errors.len() > 0 {
+                match_errors(&tknzr, &test.errors);
+            }
         }
     }
 
     println!("----------------------------------------");
+}
+
+fn match_errors(tknzr: &Tokenizer, errors: &Vec<Error>) {
+    for err in tknzr.get_errors() {
+        println!("testing for error '{}' at {}:{}", err.message, err.line, err.line_offset);
+    }
+
+    for err in errors {
+        println!("testing for error '{}' at {}:{}", err.code, err.line, err.col);
+    }
 }
 
 fn match_token(have: Token, expected: &Vec<Value>) {
@@ -162,5 +176,5 @@ fn match_token(have: Token, expected: &Vec<Value>) {
         }
     }
 
-    println!("✅ Correct output");
+    println!("✅ Test passed");
 }
