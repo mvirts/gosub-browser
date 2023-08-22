@@ -72,7 +72,7 @@ impl InputStream {
 
     // Returns true when the stream pointer is at the end of the stream
     pub fn eof(&self) -> bool {
-        self.has_read_eof
+        self.has_read_eof || self.position.offset >= self.length
     }
 
     // Reset the stream reader back to the start
@@ -97,24 +97,21 @@ impl InputStream {
         // Detect lines (if needed)
         self.read_line_endings_until(seek_offset);
 
-        // Find the line that has a larger offset. If found, it means that the
-        // previous line is the line number we need.
-        let mut line_num = 0;
-        let mut last_line_offset = 0;
-        for line_offset in self.line_offsets.clone() {
-            line_num += 1;
-            if line_offset < seek_offset {
-                last_line_offset = line_offset;
-                continue;
+        let mut last_line = 0;
+        let mut last_offset = self.line_offsets[last_line];
+        for i in 0..self.line_offsets.len() {
+            if self.line_offsets[i] > seek_offset {
+                break;
             }
 
-            break;
+            last_line = i;
+            last_offset = self.line_offsets[last_line];
         }
 
         // Set position values
         self.position.offset = seek_offset;
-        self.position.line = line_num;
-        self.position.col = last_line_offset - seek_offset + 1;
+        self.position.line = last_line + 1;
+        self.position.col = seek_offset - last_offset + 1;
         self.has_read_eof = false;
 
         // // Seems we didn't find anything (?)
@@ -233,9 +230,7 @@ impl InputStream {
     fn read_line_endings_until(&mut self, seek_offset: usize) {
         let mut last_offset = *self.line_offsets.last().unwrap();
 
-        while last_offset < seek_offset {
-            last_offset += 1;
-
+        while last_offset <= seek_offset {
             if last_offset >= self.length {
                 self.line_offsets.push(last_offset + 1);
                 break;
@@ -244,8 +239,10 @@ impl InputStream {
             // Check the next char to see if it's a '\n'
             let c = self.buffer[last_offset];
             if c == '\n' {
-                self.line_offsets.push(last_offset);
+                self.line_offsets.push(last_offset + 1);
             }
+
+            last_offset += 1;
         }
     }
 }
@@ -289,7 +286,8 @@ mod test {
         assert_eq!(is.read_char().unwrap(), 'f');
         assert_eq!(is.read_char(), None);
 
-        is.unread();
+        is.unread();    // unread EOF
+        is.unread();    // Unread 'f'
         assert_eq!(is.chars_left(), 1);
         is.unread();
         assert_eq!(is.chars_left(), 2);
@@ -329,15 +327,23 @@ mod test {
         assert_eq!(is.position.line, 2);
         assert_eq!(is.position.col, 5);
 
-        is.read_char();
+        let c = is.read_char().unwrap();
+        assert_eq!('\n', c);
         assert_eq!(is.position.offset, 9);
         assert_eq!(is.position.line, 3);
         assert_eq!(is.position.col, 1);
 
-        is.read_char();
+        let c = is.read_char().unwrap();
+        assert_eq!('\n', c);
         assert_eq!(is.position.offset, 10);
         assert_eq!(is.position.line, 4);
         assert_eq!(is.position.col, 1);
+
+        let c = is.read_char().unwrap();
+        assert_eq!('h', c);
+        assert_eq!(is.position.offset, 11);
+        assert_eq!(is.position.line, 4);
+        assert_eq!(is.position.col, 2);
 
         is.reset();
         assert_eq!(is.position.offset, 0);

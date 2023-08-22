@@ -93,17 +93,6 @@ impl<'a> Tokenizer<'a> {
                             self.consume('&');
                             return
                         }
-
-                        // // No candidates found
-                        // if candidates.len() == 0 {
-                        //     while tmp_buf.len() > 0 {
-                        //         tmp_buf.pop();
-                        //         self.stream.unread();
-                        //     }
-                        //     self.consume('&');
-                        //
-                        //     return;
-                        // }
                     }
                 }
                 CcrState::AmbiguousAmpersandState => {
