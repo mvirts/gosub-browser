@@ -3,9 +3,12 @@ use std::process::exit;
 use serde_json;
 use serde_json::Value;
 use gosub_engine::html5_parser::input_stream::InputStream;
-use gosub_engine::html5_parser::token_states::State as TokenState;
+use gosub_engine::html5_parser::token_states::{State as TokenState};
 use gosub_engine::html5_parser::tokenizer::{Options, Tokenizer};
 use gosub_engine::html5_parser::token::{Token, TokenTrait, TokenType};
+
+extern crate regex;
+use regex::Regex;
 
 #[macro_use]
 extern crate serde_derive;
@@ -24,6 +27,7 @@ pub struct Test {
     pub output: Vec<Vec<Value>>,
     #[serde(default)]
     pub errors: Vec<Error>,
+    #[serde(default)]
     pub double_escaped: Option<bool>,
     #[serde(default)]
     pub initial_states: Vec<String>,
@@ -66,8 +70,6 @@ fn main () -> io::Result<()> {
             run_token_test(&test)
         }
         println!("");
-
-        exit(1);
     }
 
     Ok(())
@@ -75,15 +77,20 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test)
 {
-    // if test.description != "End tag not closing RCDATA or RAWTEXT (ending with left-angle-bracket)" {
+    // if test.description != "Raw NUL replacement" {
     //     return;
     // }
 
     println!("🧪 running test: {}", test.description);
 
-    // run for each state
-    let last_start_tag = test.last_start_tag.clone().unwrap().to_string();
-    for state in test.initial_states.iter() {
+
+    // If no initial state is given, assume Data state
+    let mut states = test.initial_states.clone();
+    if states.len() == 0 {
+        states.push(String::from("Data state"));
+    }
+
+    for state in states.iter() {
         let state= match state.as_str() {
             "PLAINTEXT state" => TokenState::PlaintextState,
             "RAWTEXT state" => TokenState::RawTextState,
@@ -95,10 +102,18 @@ fn run_token_test(test: &Test)
         };
 
         let mut is = InputStream::new();
-        is.read_from_str(test.input.as_str(), None);
+
+
+        let input = if test.double_escaped.unwrap_or(false) {
+            escape(test.input.as_str())
+        } else {
+            test.input.to_string()
+        };
+
+        is.read_from_str(input.as_str(), None);
         let mut tknzr = Tokenizer::new(&mut is, Some(Options{
             initial_state: state,
-            last_start_tag: last_start_tag.clone(),
+            last_start_tag: test.last_start_tag.clone().unwrap_or(String::from("")),
         }));
 
         // There can be multiple tokens to match. Make sure we match all of them
@@ -106,7 +121,7 @@ fn run_token_test(test: &Test)
             // println!("Trying to match output");
             let t = tknzr.next_token();
             // println!("Token: {}", t);
-            if ! match_token(t, expected_token) {
+            if ! match_token(t, expected_token, test.double_escaped.unwrap_or(false)) {
                 exit(1);
             }
 
@@ -144,7 +159,7 @@ fn match_errors(tknzr: &Tokenizer, errors: &Vec<Error>) -> bool {
     return true;
 }
 
-fn match_token(have: Token, expected: &Vec<Value>) -> bool {
+fn match_token(have: Token, expected: &Vec<Value>, double_escaped: bool) -> bool {
     let tp = expected.get(0).unwrap();
 
     let expected_token_type = match tp.as_str().unwrap() {
@@ -171,20 +186,31 @@ fn match_token(have: Token, expected: &Vec<Value>) -> bool {
             return false;
         }
         Token::EndTagToken{name} => {
-            if name.as_str() != expected.get(1).unwrap() {
+            let output_ref = expected.get(1).unwrap().as_str().unwrap();
+            let output = if double_escaped { escape(output_ref) } else { output_ref.to_string() };
+
+            if name.as_str() != output {
                 println!("❌ Incorrect end tag");
                 return false;
             }
         }
         Token::CommentToken{value} => {
-            if value.as_str() != expected.get(1).unwrap() {
+            let output_ref = expected.get(1).unwrap().as_str().unwrap();
+            let output = if double_escaped { escape(output_ref) } else { output_ref.to_string() };
+
+            if value.as_str() != output {
                 println!("❌ Incorrect text found in comment token");
+                println!("    wanted: '{}', got: '{}'", output, value.as_str());
                 return false;
             }
         }
         Token::TextToken{value} => {
-            if value.as_str() != expected.get(1).unwrap() {
-                println!("❌ Incorrect text found in text token (want: {} got: {})", expected.get(1).unwrap(), value.as_str());
+            let output_ref = expected.get(1).unwrap().as_str().unwrap();
+            let output = if double_escaped { escape(output_ref) } else { output_ref.to_string() };
+
+            if value.as_str() != output {
+                println!("❌ Incorrect text found in text token");
+                println!("    wanted: '{}', got: '{}'", output, value.as_str());
                 return false;
             }
         },
@@ -196,4 +222,12 @@ fn match_token(have: Token, expected: &Vec<Value>) -> bool {
 
     println!("✅ Test passed");
     return true;
+}
+
+fn escape(input: &str) -> String {
+    let re = Regex::new(r"\\u([0-9a-fA-F]{4})").unwrap();
+    re.replace_all(input, |caps: &regex::Captures| {
+        let hex_val = u32::from_str_radix(&caps[1], 16).unwrap();
+        char::from_u32(hex_val).unwrap().to_string()
+    }).into_owned()
 }

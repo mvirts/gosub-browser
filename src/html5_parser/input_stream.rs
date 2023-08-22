@@ -1,6 +1,8 @@
 use std::fs::File;
 use std::io;
 use std::io::Read;
+use crate::html5_parser::tokenizer::CHAR_LF;
+use crate::html5_parser::tokenizer::CHAR_CR;
 
 // Encoding defines the way the buffer stream is read, as what defines a "character".
 #[derive(PartialEq)]
@@ -20,9 +22,9 @@ pub enum Confidence {
 }
 
 pub struct Position {
-    pub offset: usize,
-    pub line: usize,
-    pub col: usize,
+    pub offset: i64,
+    pub line: i64,
+    pub col: i64,
 }
 
 // HTML(5) input stream structure
@@ -48,9 +50,9 @@ impl InputStream {
             encoding: Encoding::UTF8,
             confidence: Confidence::Tentative,
             position: Position{
-                offset: 0,
-                line: 1,
-                col: 1,
+                offset: -1,
+                line: 0,
+                col: 0,
             },
             length: 0,
             line_offsets: vec![0],      // first line always starts at 0
@@ -72,35 +74,35 @@ impl InputStream {
 
     // Returns true when the stream pointer is at the end of the stream
     pub fn eof(&self) -> bool {
-        self.has_read_eof || self.position.offset >= self.length
+        self.has_read_eof || self.position.offset as usize >= self.length
     }
 
     // Reset the stream reader back to the start
     pub fn reset(&mut self) {
-        self.position.offset = 0;
-        self.position.line = 1;
-        self.position.col = 1;
+        self.position.offset = -1;
+        self.position.line = 0;
+        self.position.col = 0;
     }
 
     // Seek explicit offset in the stream (based on chars)
-    pub fn seek(&mut self, off: usize) {
+    pub fn seek(&mut self, off: i64) {
         self.set_offset(off);
     }
 
     // Sets the offset AND automatically adjust the line/col position
-    fn set_offset(&mut self, mut seek_offset: usize) {
+    fn set_offset(&mut self, mut seek_offset: i64) {
         // Cap to length
-        if seek_offset > self.length {
-            seek_offset = self.length - 1;
+        if seek_offset as usize > self.length {
+            seek_offset = (self.length - 1) as i64;     // cast?
         }
 
         // Detect lines (if needed)
         self.read_line_endings_until(seek_offset);
 
-        let mut last_line = 0;
+        let mut last_line: usize = 0;
         let mut last_offset = self.line_offsets[last_line];
         for i in 0..self.line_offsets.len() {
-            if self.line_offsets[i] > seek_offset {
+            if self.line_offsets[i] > seek_offset as usize {
                 break;
             }
 
@@ -110,8 +112,8 @@ impl InputStream {
 
         // Set position values
         self.position.offset = seek_offset;
-        self.position.line = last_line + 1;
-        self.position.col = seek_offset - last_offset + 1;
+        self.position.line = (last_line + 1) as i64;        // @todo: cast issues
+        self.position.col = seek_offset - last_offset as i64 + 1;
         self.has_read_eof = false;
 
         // // Seems we didn't find anything (?)
@@ -119,7 +121,7 @@ impl InputStream {
     }
 
     pub fn tell(&self) -> usize {
-        self.position.offset
+        self.position.offset as usize
     }
 
     // Set the given confidence of the input stream encoding
@@ -144,6 +146,8 @@ impl InputStream {
             Encoding::UTF8 => {
                 // Convert the u8 buffer into utf8 string
                 let str_buf = std::str::from_utf8(&self.u8_buffer).unwrap();
+                let str_buf= str_buf.replace("\u{000D}\u{000A}", "\u{000A}");
+                let str_buf= str_buf.replace("\u{000D}", "\u{000A}");
 
                 // Convert the utf8 string into characters so we can use easy indexing
                 self.buffer = str_buf.chars().collect();
@@ -151,11 +155,7 @@ impl InputStream {
             }
             Encoding::ASCII => {
                 // Convert the string into characters so we can use easy indexing. Any non-ascii chars (> 0x7F) are converted to '?'
-                self.buffer = self
-                    .u8_buffer
-                    .iter()
-                    .map(|&byte| if byte.is_ascii() { byte as char } else { '?' })
-                    .collect();
+                self.buffer = self.normalize_newlines_and_ascii(&self.u8_buffer);
                 self.length = self.buffer.len();
             }
         }
@@ -163,12 +163,34 @@ impl InputStream {
         self.encoding = e;
     }
 
+    fn normalize_newlines_and_ascii(&self, buffer: &Vec<u8>) -> Vec<char> {
+        let mut result = Vec::with_capacity(buffer.len());
+
+        for i in 0..buffer.len() {
+            if buffer[i] == CHAR_CR as u8 {
+                // convert CR to LF, or CRLF to LF
+                if i + 1 < buffer.len() && buffer[i + 1] == CHAR_LF as u8 {
+                    continue;
+                }
+                result.push(CHAR_LF);
+            } else if buffer[i] >= 0x80 {
+                // Convert high ascii to ?
+                result.push('?');
+            } else {
+                // everything else is ok
+                result.push(buffer[i] as char)
+            }
+        }
+
+        return result
+    }
+
     // Populates the current buffer with the contents of given file f
     pub fn read_from_file(&mut self, mut f: File, e: Option<Encoding>) -> io::Result<()> {
         // First we read the u8 bytes into a buffer
         f.read_to_end(&mut self.u8_buffer).expect("uh oh");
         self.force_set_encoding(e.unwrap_or(Encoding::UTF8));
-        self.set_offset(0);
+        self.reset();
         Ok(())
     }
 
@@ -176,19 +198,20 @@ impl InputStream {
     pub fn read_from_str(&mut self, s: &str, e: Option<Encoding>) {
         self.u8_buffer = Vec::from(s.as_bytes());
         self.force_set_encoding(e.unwrap_or(Encoding::UTF8));
-        self.set_offset(0);
+        self.reset();
     }
 
     // Returns the number of characters left in the buffer
     pub(crate) fn chars_left(&self) -> usize {
-        self.length - self.position.offset
+        self.length - self.position.offset as usize
     }
 
     // Reads a character and increases the current pointer, or read EOF as None
     pub(crate) fn read_char(&mut self) -> Option<char> {
-        if self.position.offset < self.length {
-            let c = self.buffer[self.position.offset];
-            self.set_offset(self.position.offset + 1);
+        self.set_offset(self.position.offset + 1);
+
+        if (self.position.offset as usize) < self.length {
+            let c = self.buffer[self.position.offset as usize];
             Some(c)
         } else {
             self.has_read_eof = true;
@@ -204,6 +227,8 @@ impl InputStream {
 
         if self.position.offset > 0 {
             self.set_offset(self.position.offset - 1);
+        } else {
+            self.reset();
         }
     }
 
@@ -227,10 +252,10 @@ impl InputStream {
     }
 
     // Populates the line endings
-    fn read_line_endings_until(&mut self, seek_offset: usize) {
+    fn read_line_endings_until(&mut self, seek_offset: i64) {
         let mut last_offset = *self.line_offsets.last().unwrap();
 
-        while last_offset <= seek_offset {
+        while last_offset <= seek_offset as usize {
             if last_offset >= self.length {
                 self.line_offsets.push(last_offset + 1);
                 break;

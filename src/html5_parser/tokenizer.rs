@@ -7,6 +7,7 @@ use crate::html5_parser::token_states::State;
 pub const CHAR_NUL: char = '\u{0000}';
 pub const CHAR_TAB: char = '\u{0009}';
 pub const CHAR_LF: char = '\u{000A}';
+pub const CHAR_CR: char = '\u{000D}';
 pub const CHAR_FF: char = '\u{000C}';
 pub const CHAR_SPACE: char = '\u{0020}';
 pub const CHAR_REPLACEMENT: char = '\u{FFFD}';
@@ -31,10 +32,23 @@ pub struct Options {
     pub last_start_tag: String,         // Sets the last starting tag in the tokenizer. Normally only needed when dealing with tests
 }
 
+macro_rules! add_to_token_value {
+    ($self:expr, $c:expr) => {
+        match &mut $self.current_token {
+            Some(Token::CommentToken {value, ..}) => {
+                value.push($c);
+            }
+            _ => {},
+        }
+    }
+}
 macro_rules! add_to_token_name {
     ($self:expr, $c:expr) => {
         match &mut $self.current_token {
             Some(Token::StartTagToken {name, ..}) => {
+                name.push($c);
+            }
+            Some(Token::EndTagToken {name, ..}) => {
                 name.push($c);
             }
             _ => {},
@@ -51,10 +65,10 @@ macro_rules! to_lowercase {
 
 #[derive(PartialEq)]
 pub struct ParseError {
-    pub message: String,    // Parse message
-    pub line: usize,        // Line number of the error
-    pub col: usize,         // Offset on line of the error
-    pub offset: usize,      // Position of the error on the line
+    pub message: String,  // Parse message
+    pub line: i64,        // Line number of the error
+    pub col: i64,         // Offset on line of the error
+    pub offset: i64,      // Position of the error on the line
 }
 
 impl<'a> Tokenizer<'a> {
@@ -104,8 +118,8 @@ impl<'a> Tokenizer<'a> {
                         Some('&') => self.state = State::CharacterReferenceInDataState,
                         Some('<') => self.state = State::TagOpenState,
                         Some(CHAR_NUL) => {
-                            self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.consume(c.unwrap());
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
                         },
                         None => {
                             // EOF
@@ -139,8 +153,8 @@ impl<'a> Tokenizer<'a> {
                             self.token_queue.push(Token::EofToken);
                         },
                         Some(CHAR_NUL) => {
-                            self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.consume(CHAR_REPLACEMENT);
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
                         },
                         _ => self.consume(c.unwrap()),
                     }
@@ -155,8 +169,8 @@ impl<'a> Tokenizer<'a> {
                     match c {
                         Some('<') => self.state = State::RawTextLessThanSignState,
                         Some(CHAR_NUL) => {
-                            self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.consume(CHAR_REPLACEMENT);
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
                         },
                         None => {
                             // EOF
@@ -174,8 +188,8 @@ impl<'a> Tokenizer<'a> {
                     match c {
                         Some('<') => self.state = State::ScriptDataLessThenSignState,
                         Some(CHAR_NUL) => {
-                            self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.consume(CHAR_REPLACEMENT);
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
                         },
                         None => {
                             // EOF
@@ -192,8 +206,8 @@ impl<'a> Tokenizer<'a> {
                     let c = self.stream.read_char();
                     match c {
                         Some(CHAR_NUL) => {
-                            self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.consume(CHAR_REPLACEMENT);
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
                         },
                         None => {
                             if self.has_consumed_data() {
@@ -231,11 +245,11 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::TagNameState;
                         }
                         Some('?') => {
-                            self.parse_error(ParserError::UnexpectedQuestionMarkInsteadOfTagName);
                             self.current_token = Some(Token::CommentToken{
                                 value: "".into(),
                             });
                             self.stream.unread();
+                            self.parse_error(ParserError::UnexpectedQuestionMarkInsteadOfTagName);
                             self.state = State::BogusCommentState;
                         }
                         None => {
@@ -299,8 +313,8 @@ impl<'a> Tokenizer<'a> {
                         },
                         Some(ch @ 'A'..='Z') => add_to_token_name!(self, to_lowercase!(ch)),
                         Some(CHAR_NUL) => {
-                            self.parse_error(ParserError::UnexpectedNullCharacter);
                             add_to_token_name!(self, CHAR_REPLACEMENT);
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
                         },
                         None => {
                             self.parse_error(ParserError::EofInTag);
@@ -376,6 +390,7 @@ impl<'a> Tokenizer<'a> {
                                 let s: String = self.temporary_buffer.iter().collect::<String>();
                                 self.set_name_in_current_token(s);
 
+                                self.last_start_token = String::new();
                                 self.push_current_token_to_queue();
                                 self.state = State::DataState;
                             } else {
@@ -474,7 +489,7 @@ impl<'a> Tokenizer<'a> {
                             if self.is_appropriate_end_token(&self.temporary_buffer) {
                                 let s: String = self.temporary_buffer.iter().collect::<String>();
                                 self.set_name_in_current_token(s);
-
+                                self.last_start_token = String::new();
                                 self.push_current_token_to_queue();
                                 self.state = State::DataState;
                             } else {
@@ -542,34 +557,6 @@ impl<'a> Tokenizer<'a> {
                             self.stream.unread();
                             self.state = State::AttributeNameState;
                         }
-                        // Some('>') => {
-                        //     self.push_current_token_to_queue();
-                        //     self.state = State::DataState;
-                        // },
-                        // Some(ch @ 'A'..='Z') => {
-                        //     self.current_attr_name.clear();
-                        //     self.current_attr_name.push(to_lowercase!(ch));
-                        //     self.current_attr_value = String::new();
-                        //     self.state = State::AttributeNameState;
-                        // },
-                        // Some(CHAR_NUL) => {
-                        //     self.parse_error(ParserError::NullCharacterReference);
-                        //     self.current_attr_name.push(CHAR_REPLACEMENT);
-                        //     self.current_attr_value = String::new();
-                        //     self.state = State::AttributeNameState;
-                        // },
-                        // Some('"') | Some('\'') | Some('<') | Some('=') => {
-                        //     self.parse_error(ParserError::UnexpectedCharacterInAttributeName);
-                        //
-                        //     self.current_attr_name.clear();
-                        //     self.current_attr_name.push(c.unwrap());
-                        //     self.current_attr_value = String::new();
-                        //     self.state = State::AttributeNameState;
-                        // }
-                        // None => {
-                        //     self.parse_error(ParserError::EofInTag);
-                        //     self.state = State::DataState;
-                        // },
                         _ => {
                             self.current_attr_name.clear();
                             self.current_attr_value = String::new();
@@ -597,8 +584,8 @@ impl<'a> Tokenizer<'a> {
                             self.current_attr_name.push(to_lowercase!(ch));
                         },
                         Some(CHAR_NUL)  => {
-                            self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.current_attr_name.push(CHAR_REPLACEMENT);
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
                         },
                         Some('"') | Some('\'') | Some('<') => {
                             self.parse_error(ParserError::UnexpectedCharacterInAttributeName);
@@ -666,8 +653,8 @@ impl<'a> Tokenizer<'a> {
                         Some('"') => self.state = State::AfterAttributeValueQuotedState,
                         Some('&') => _ = self.consume_character_reference(Some('"'), true),
                         Some(CHAR_NUL) => {
-                            self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.current_attr_value.push(CHAR_REPLACEMENT);
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
                         },
                         None => {
                             self.parse_error(ParserError::EofInTag);
@@ -684,8 +671,8 @@ impl<'a> Tokenizer<'a> {
                         Some('\'') => self.state = State::AfterAttributeValueQuotedState,
                         Some('&') => _ = self.consume_character_reference(Some('\''), true),
                         Some(CHAR_NUL) => {
-                            self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.current_attr_value.push(CHAR_REPLACEMENT);
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
                         },
                         None => {
                             self.parse_error(ParserError::EofInTag);
@@ -711,8 +698,8 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::DataState;
                         },
                         Some(CHAR_NUL) => {
-                            self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.current_attr_value.push(CHAR_REPLACEMENT);
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
                         },
                         Some('"') | Some('\'') | Some('<') | Some('=') | Some('`') => {
                             self.parse_error(ParserError::UnexpectedCharacterInUnquotedAttributeValue);
@@ -771,7 +758,27 @@ impl<'a> Tokenizer<'a> {
                         },
                     }
                 }
-                // State::BogusCommentState => {}
+                State::BogusCommentState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('>') => {
+                            self.push_current_token_to_queue();
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInTag);
+                            self.push_current_token_to_queue();
+                            self.state = State::DataState;
+                        },
+                        Some(CHAR_NUL) => {
+                            add_to_token_value!(self, CHAR_REPLACEMENT);
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                        }
+                        _ => {
+                            add_to_token_value!(self, c.unwrap());
+                        },
+                    }
+                }
                 // State::MarkupDeclarationOpenState => {}
                 // State::CommentStartState => {}
                 // State::CommentStartDashState => {}
@@ -843,6 +850,9 @@ impl<'a> Tokenizer<'a> {
 
     // Creates a parser log error message
     pub(crate) fn parse_error(&mut self, error: ParserError) {
+        // unread char, so we are back one position (the char we just read)
+        // self.stream.unread();
+
         // Add to parse log
         self.errors.push(ParseError{
             message: error.as_str().to_string(),
@@ -850,6 +860,9 @@ impl<'a> Tokenizer<'a> {
             col: self.stream.position.col,
             offset: self.stream.position.offset,
         });
+
+        // And reread again
+        // self.stream.read_char();
     }
 
     // Set is_closing_tag in current token
@@ -923,7 +936,8 @@ impl<'a> Tokenizer<'a> {
         if self.has_consumed_data() {
             self.push_token_to_queue(&Token::TextToken{
                 value: self.get_consumed_str(),
-            })
+            });
+            self.clear_consume_buffer();
         }
 
         // We are cloning the current token before we send it to the token_queue. This might be inefficient.
