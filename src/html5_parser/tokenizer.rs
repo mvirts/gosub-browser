@@ -24,7 +24,6 @@ pub struct Tokenizer<'a> {
     pub token_queue: Vec<Token>,        // Queue of emitted tokens. Needed because we can generate multiple tokens during iteration
     pub errors: Vec<ParseError>,        // Parse errors (if any)
     pub last_start_token: String,       // The last emitted start token (or empty if none)
-    pub is_eof: bool,                   // Set to true when we encountered an eof
 }
 
 pub struct Options {
@@ -50,11 +49,12 @@ macro_rules! to_lowercase {
     };
 }
 
+#[derive(PartialEq)]
 pub struct ParseError {
-    pub message: String,        // Parse message
-    pub line: usize,            // Line number of the error
-    pub line_offset: usize,     // Offset on line of the error
-    pub offset: usize           // Position of the error on the line
+    pub message: String,    // Parse message
+    pub line: usize,        // Line number of the error
+    pub col: usize,         // Offset on line of the error
+    pub offset: usize,      // Position of the error on the line
 }
 
 impl<'a> Tokenizer<'a> {
@@ -71,7 +71,6 @@ impl<'a> Tokenizer<'a> {
             current_attr_value: String::new(),
             temporary_buffer: vec![],
             errors: vec![],
-            is_eof: false,
             ignore_attribute: false,
         };
     }
@@ -120,6 +119,8 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::CharacterReferenceInDataState => {
+                    // @TODO: we get into trouble with &copy&, as the last ampersand will get collected by dataState, and consume_character_reference does not
+                    // consume the &.
                     _ = self.consume_character_reference(None, false);
                     self.state = State::DataState;
                 }
@@ -809,7 +810,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     // Consumes the given string
-    pub(crate) fn consume_string(&mut self, s: String) {
+    pub(crate) fn consume_string(&mut self, s: &str) {
         // Add c to the current token data
         for c in s.chars() {
             self.consumed.push(c)
@@ -845,9 +846,9 @@ impl<'a> Tokenizer<'a> {
         // Add to parse log
         self.errors.push(ParseError{
             message: error.as_str().to_string(),
-            line: self.stream.current_line,
-            line_offset: self.stream.current_line_offset,
-            offset: self.stream.current_offset,
+            line: self.stream.position.line,
+            col: self.stream.position.col,
+            offset: self.stream.position.offset,
         });
     }
 

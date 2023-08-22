@@ -5,7 +5,7 @@ pub mod gosub_engine::html5_parser;
 
 use gosub_engine::html5_parser::input_stream::Confidence;
 use gosub_engine::html5_parser::input_stream::{Encoding, InputStream};
-use gosub_engine::html5_parser::Html5Parser;
+use gosub_engine::html5_parser::parser::Html5Parser;
 
 fn main() {
     let file = File::open("../../hello.html").expect("could not open file");

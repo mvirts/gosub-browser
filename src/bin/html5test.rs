@@ -75,12 +75,14 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test)
 {
+    // if test.description != "End tag not closing RCDATA or RAWTEXT (ending with left-angle-bracket)" {
+    //     return;
+    // }
+
     println!("🧪 running test: {}", test.description);
 
-    // println!("INITIAL STATES: {:?}", test.initial_states);
-
     // run for each state
-    let last_start_tag = test.last_start_tag.clone().unwrap();
+    let last_start_tag = test.last_start_tag.clone().unwrap().to_string();
     for state in test.initial_states.iter() {
         let state= match state.as_str() {
             "PLAINTEXT state" => TokenState::PlaintextState,
@@ -91,7 +93,6 @@ fn run_token_test(test: &Test)
             "Data state" => TokenState::DataState,
             _ => panic!("unknown state found in test: {} ", state)
         };
-        // println!("RUN ON STATE: {:?}", state);
 
         let mut is = InputStream::new();
         is.read_from_str(test.input.as_str(), None);
@@ -105,10 +106,14 @@ fn run_token_test(test: &Test)
             // println!("Trying to match output");
             let t = tknzr.next_token();
             // println!("Token: {}", t);
-            match_token(t, expected_token);
+            if ! match_token(t, expected_token) {
+                exit(1);
+            }
 
             if test.errors.len() > 0 {
-                match_errors(&tknzr, &test.errors);
+                if ! match_errors(&tknzr, &test.errors) {
+                    exit(1);
+                }
             }
         }
     }
@@ -116,17 +121,30 @@ fn run_token_test(test: &Test)
     println!("----------------------------------------");
 }
 
-fn match_errors(tknzr: &Tokenizer, errors: &Vec<Error>) {
-    for err in tknzr.get_errors() {
-        println!("testing for error '{}' at {}:{}", err.message, err.line, err.line_offset);
+fn match_errors(tknzr: &Tokenizer, errors: &Vec<Error>) -> bool {
+    for want_err in errors {
+        let mut found = false;
+
+        for got_err in tknzr.get_errors() {
+            if got_err.message == want_err.code && got_err.line as i64 == want_err.line && got_err.line_offset as i64 == want_err.col {
+                found = true;
+                println!("✅ found parse error '{}' at {}:{}", got_err.message, got_err.line, got_err.line_offset);
+                break;
+            }
+        }
+        if ! found {
+            println!("❌ expected parse error '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
+            for got_err in tknzr.get_errors() {
+                println!("    '{}' at {}:{}", got_err.message, got_err.line, got_err.line_offset);
+            }
+            return false;
+        }
     }
 
-    for err in errors {
-        println!("testing for error '{}' at {}:{}", err.code, err.line, err.col);
-    }
+    return true;
 }
 
-fn match_token(have: Token, expected: &Vec<Value>) {
+fn match_token(have: Token, expected: &Vec<Value>) -> bool {
     let tp = expected.get(0).unwrap();
 
     let expected_token_type = match tp.as_str().unwrap() {
@@ -140,41 +158,42 @@ fn match_token(have: Token, expected: &Vec<Value>) {
 
     if have.type_of() != expected_token_type {
         println!("❌ Incorrect token type found (want: {:?}, got {:?})", expected_token_type, have.type_of());
-        return;
+        return false;
     }
 
     match have {
         Token::DocTypeToken{..} => {
             println!("❌ Incorrect doctype (not implemented in testsuite)");
-            return;
+            return false;
         }
         Token::StartTagToken{..} => {
             println!("❌ Incorrect start tag (not implemented in testsuite)");
-            return;
+            return false;
         }
         Token::EndTagToken{name} => {
             if name.as_str() != expected.get(1).unwrap() {
                 println!("❌ Incorrect end tag");
-                return;
+                return false;
             }
         }
         Token::CommentToken{value} => {
             if value.as_str() != expected.get(1).unwrap() {
                 println!("❌ Incorrect text found in comment token");
-                return;
+                return false;
             }
         }
         Token::TextToken{value} => {
             if value.as_str() != expected.get(1).unwrap() {
                 println!("❌ Incorrect text found in text token (want: {} got: {})", expected.get(1).unwrap(), value.as_str());
-                return;
+                return false;
             }
         },
         Token::EofToken => {
             println!("❌ EOF token");
-            return;
+            return false;
         }
     }
 
     println!("✅ Test passed");
+    return true;
 }
