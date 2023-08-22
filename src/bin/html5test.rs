@@ -126,16 +126,16 @@ fn match_errors(tknzr: &Tokenizer, errors: &Vec<Error>) -> bool {
         let mut found = false;
 
         for got_err in tknzr.get_errors() {
-            if got_err.message == want_err.code && got_err.line as i64 == want_err.line && got_err.line_offset as i64 == want_err.col {
+            if got_err.message == want_err.code && got_err.line as i64 == want_err.line && got_err.col as i64 == want_err.col {
                 found = true;
-                println!("✅ found parse error '{}' at {}:{}", got_err.message, got_err.line, got_err.line_offset);
+                println!("✅ found parse error '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
                 break;
             }
         }
         if ! found {
             println!("❌ expected parse error '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
             for got_err in tknzr.get_errors() {
-                println!("    '{}' at {}:{}", got_err.message, got_err.line, got_err.line_offset);
+                println!("    '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
             }
             return false;
         }

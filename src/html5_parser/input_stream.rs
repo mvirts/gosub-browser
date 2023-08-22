@@ -94,38 +94,31 @@ impl InputStream {
             seek_offset = self.length - 1;
         }
 
-        // Find the last linenumber/offset we know
-        let mut last_offset = *self.line_offsets.last().unwrap_or(&self.length);
+        // Detect lines (if needed)
+        self.read_line_endings_until(seek_offset);
 
-        // No offset found. We haven't scanned this far in the stream yet, scan further until we find offset
-        while last_offset < seek_offset {
-            last_offset += 1;
-
-            // Check the next char to see if it's a '\n'
-            let c = self.buffer[last_offset];
-            if c == '\n' {
-                self.line_offsets.push(last_offset);
+        // Find the line that has a larger offset. If found, it means that the
+        // previous line is the line number we need.
+        let mut line_num = 0;
+        let mut last_line_offset = 0;
+        for line_offset in self.line_offsets.clone() {
+            line_num += 1;
+            if line_offset < seek_offset {
+                last_line_offset = line_offset;
+                continue;
             }
+
+            break;
         }
 
-        // Set primary values
+        // Set position values
         self.position.offset = seek_offset;
+        self.position.line = line_num;
+        self.position.col = last_line_offset - seek_offset + 1;
         self.has_read_eof = false;
 
-        // Try and find the line/col for this offset
-        let mut last_offset = 0;
-        let mut line = 1;
-        for o in self.line_offsets.clone() {
-            // Found the line that is larger than the wanted offset
-            if o >= seek_offset {
-                self.position.line = line;
-                self.position.col = self.position.offset - last_offset + 1;
-                return;
-            }
-
-            last_offset = o;
-            line += 1;
-        }
+        // // Seems we didn't find anything (?)
+        // panic!("no line/col could be found for {} (len: {})", seek_offset, self.length);
     }
 
     pub fn tell(&self) -> usize {
@@ -234,6 +227,26 @@ impl InputStream {
         }
 
         Some(self.buffer[(c + idx) as usize])
+    }
+
+    // Populates the line endings
+    fn read_line_endings_until(&mut self, seek_offset: usize) {
+        let mut last_offset = *self.line_offsets.last().unwrap();
+
+        while last_offset < seek_offset {
+            last_offset += 1;
+
+            if last_offset >= self.length {
+                self.line_offsets.push(last_offset + 1);
+                break;
+            }
+
+            // Check the next char to see if it's a '\n'
+            let c = self.buffer[last_offset];
+            if c == '\n' {
+                self.line_offsets.push(last_offset);
+            }
+        }
     }
 }
 
