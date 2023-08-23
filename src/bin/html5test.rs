@@ -118,9 +118,7 @@ fn run_token_test(test: &Test)
 
         // There can be multiple tokens to match. Make sure we match all of them
         for expected_token in test.output.iter() {
-            // println!("Trying to match output");
             let t = tknzr.next_token();
-            // println!("Token: {}", t);
             if ! match_token(t, expected_token, test.double_escaped.unwrap_or(false)) {
                 exit(1);
             }

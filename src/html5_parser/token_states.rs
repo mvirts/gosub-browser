@@ -68,4 +68,6 @@ pub enum State {
     AfterDocTypeSystemIdentifiedState,
     BogusDocTypeState,
     CDataSectionState,
+    CDataSectionBracketState,
+    CDataSectionEndState,
 }

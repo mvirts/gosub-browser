@@ -1,8 +1,7 @@
 use std::fs::File;
 use std::io;
 use std::io::Read;
-use crate::html5_parser::tokenizer::CHAR_LF;
-use crate::html5_parser::tokenizer::CHAR_CR;
+use crate::html5_parser::tokenizer::{CHAR_LF, CHAR_CR};
 
 // Encoding defines the way the buffer stream is read, as what defines a "character".
 #[derive(PartialEq)]
@@ -21,6 +20,7 @@ pub enum Confidence {
                // Irrelevant          // There is no content encoding for this stream
 }
 
+#[derive(PartialEq, Debug)]
 pub struct Position {
     pub offset: i64,
     pub line: i64,
@@ -40,7 +40,7 @@ pub struct InputStream {
     u8_buffer: Vec<u8>,                 // Reference to the actual buffer stream in u8 bytes
                                         // If all things are ok, both buffer and u8_buffer should refer to the same memory location (?)
 
-    pub has_read_eof: bool,             // True when we just read EOF
+    pub has_read_eof: bool,             // True when we just read an EOF
 }
 
 impl InputStream {
@@ -50,9 +50,9 @@ impl InputStream {
             encoding: Encoding::UTF8,
             confidence: Confidence::Tentative,
             position: Position{
-                offset: -1,
-                line: 0,
-                col: 0,
+                offset: 0,
+                line: 1,
+                col: 1,
             },
             length: 0,
             line_offsets: vec![0],      // first line always starts at 0
@@ -74,23 +74,29 @@ impl InputStream {
 
     // Returns true when the stream pointer is at the end of the stream
     pub fn eof(&self) -> bool {
+        // Nothing has been read yet.
+        // if self.position.offset == -1 {
+        //     // If it's empty, we are always EOF, even when nothing is read
+        //     return self.length == 0;
+        // }
+
         self.has_read_eof || self.position.offset as usize >= self.length
     }
 
     // Reset the stream reader back to the start
     pub fn reset(&mut self) {
-        self.position.offset = -1;
-        self.position.line = 0;
-        self.position.col = 0;
+        self.position.offset = 0;
+        self.position.line = 1;
+        self.position.col = 1;
     }
 
     // Seek explicit offset in the stream (based on chars)
     pub fn seek(&mut self, off: i64) {
-        self.set_offset(off);
+        self.position = self.get_position(off);
     }
 
-    // Sets the offset AND automatically adjust the line/col position
-    fn set_offset(&mut self, mut seek_offset: i64) {
+    // Retrieves position structure for given offset
+    pub fn get_position(&mut self, mut seek_offset: i64) -> Position {
         // Cap to length
         if seek_offset as usize > self.length {
             seek_offset = (self.length - 1) as i64;     // cast?
@@ -111,13 +117,11 @@ impl InputStream {
         }
 
         // Set position values
-        self.position.offset = seek_offset;
-        self.position.line = (last_line + 1) as i64;        // @todo: cast issues
-        self.position.col = seek_offset - last_offset as i64 + 1;
-        self.has_read_eof = false;
-
-        // // Seems we didn't find anything (?)
-        // panic!("no line/col could be found for {} (len: {})", seek_offset, self.length);
+        return Position{
+            offset: seek_offset,
+            line: (last_line + 1) as i64,
+            col: seek_offset - last_offset as i64 + 1,
+        }
     }
 
     pub fn tell(&self) -> usize {
@@ -203,52 +207,62 @@ impl InputStream {
 
     // Returns the number of characters left in the buffer
     pub(crate) fn chars_left(&self) -> usize {
+        if self.position.offset < 0 {
+            return self.length;
+        }
+
         self.length - self.position.offset as usize
     }
 
     // Reads a character and increases the current pointer, or read EOF as None
     pub(crate) fn read_char(&mut self) -> Option<char> {
-        self.set_offset(self.position.offset + 1);
+        // Return none if we already have read EOF
+        if self.has_read_eof {
+            return None;
+        }
 
-        if (self.position.offset as usize) < self.length {
+        // If we still can move forward in the stream, move forwards
+        if self.position.offset < (self.length as i64) {
             let c = self.buffer[self.position.offset as usize];
+            self.position = self.get_position(self.position.offset + 1);
             Some(c)
         } else {
+            // otherwise, we have reached the end of the stream
             self.has_read_eof = true;
             None
         }
     }
 
     pub(crate) fn unread(&mut self) {
+        // We already read eof, so "unread" the eof by unsetting the flag
         if self.has_read_eof {
             self.has_read_eof = false;
             return;
         }
 
+        // If we can track back from the offset, we can do so
         if self.position.offset > 0 {
-            self.set_offset(self.position.offset - 1);
-        } else {
-            self.reset();
+            self.position = self.get_position(self.position.offset - 1);
+        // } else {
+        //     // otherwise, we reset to nothing read (offset = -1)
+        //     self.reset();
         }
     }
 
     // Looks ahead in the stream, can use an optional index if we want to seek further
     // (or back) in the stream.
-    // @TODO: idx can be pos or neg. But self.current_offset is always positive. This clashes.
     pub(crate) fn look_ahead(&self, idx: i32) -> Option<char> {
-        let c = self.position.offset as i32;
-
         // Trying to look after the stream
-        if c + idx > self.length as i32 {
+        if self.position.offset + idx as i64 > self.length as i64 {
             return None;
         }
 
         // Trying to look before the stream
-        if c + idx < 0 {
+        if self.position.offset + (idx as i64) < 0 {
             return None;
         }
 
-        Some(self.buffer[(c + idx) as usize])
+        Some(self.buffer[(self.position.offset + (idx as i64)) as usize])
     }
 
     // Populates the line endings
@@ -338,47 +352,54 @@ mod test {
     #[test]
     fn test_offsets() {
         let mut is = InputStream::new();
+        is.read_from_str("abc", Some(Encoding::UTF8));
+        assert_eq!(is.position, Position{ offset: 0, line: 1, col: 1});
+        assert_eq!('a', is.read_char().unwrap());
+        assert_eq!(is.position, Position{ offset: 1, line: 1, col: 2});
+        assert_eq!('b', is.read_char().unwrap());
+        assert_eq!(is.position, Position{ offset: 2, line: 1, col: 3});
+        assert_eq!('c', is.read_char().unwrap());
+        assert_eq!(is.position, Position{ offset: 3, line: 1, col: 4});
+        assert_eq!(is.read_char().is_none(), true);
+        assert_eq!(is.position, Position{ offset: 3, line: 1, col: 4});
+        assert_eq!(is.read_char().is_none(), true);
+        assert_eq!(is.position, Position{ offset: 3, line: 1, col: 4});
+
+
+        let mut is = InputStream::new();
         is.read_from_str("abc\ndefg\n\nhi\njk\nlmno\n\n\npqrst\nu\nv\nw\n\nxy\nz", Some(Encoding::UTF8));
         assert_eq!(is.length, 40);
 
+        is.seek(0);
+        assert_eq!(is.position, Position{ offset: 0, line: 1, col: 1});
+        let c = is.read_char().unwrap();
+        assert_eq!('a', c);
+        assert_eq!(is.position, Position{ offset: 1, line: 1, col: 2});
+
         is.seek(7);
-        assert_eq!(is.position.offset, 7);
-        assert_eq!(is.position.line, 2);
-        assert_eq!(is.position.col, 4);
+        assert_eq!(is.position, Position{ offset: 7, line: 2, col: 4});
 
         let c = is.read_char().unwrap();
         assert_eq!('g', c);
-        assert_eq!(is.position.offset, 8);
-        assert_eq!(is.position.line, 2);
-        assert_eq!(is.position.col, 5);
+        assert_eq!(is.position, Position{ offset: 8, line: 2, col: 5});
 
         let c = is.read_char().unwrap();
         assert_eq!('\n', c);
-        assert_eq!(is.position.offset, 9);
-        assert_eq!(is.position.line, 3);
-        assert_eq!(is.position.col, 1);
+        assert_eq!(is.position, Position{ offset: 9, line: 3, col: 1});
 
         let c = is.read_char().unwrap();
         assert_eq!('\n', c);
-        assert_eq!(is.position.offset, 10);
-        assert_eq!(is.position.line, 4);
-        assert_eq!(is.position.col, 1);
+        assert_eq!(is.position, Position{ offset: 10, line: 4, col: 1});
 
         let c = is.read_char().unwrap();
         assert_eq!('h', c);
-        assert_eq!(is.position.offset, 11);
-        assert_eq!(is.position.line, 4);
-        assert_eq!(is.position.col, 2);
+        assert_eq!(is.position, Position{ offset: 11, line: 4, col: 2});
 
         is.reset();
-        assert_eq!(is.position.offset, 0);
-        assert_eq!(is.position.line, 1);
-        assert_eq!(is.position.col, 1);
+        assert_eq!(is.position, Position{ offset: 0, line: 1, col: 1});
 
         is.seek(100);
-        assert_eq!(is.position.offset, 39);
-        assert_eq!(is.position.line, 15);
-        assert_eq!(is.position.col, 1);
+        assert_eq!(is.position, Position{ offset: 39, line: 15, col: 1});
     }
 
     #[test]
@@ -424,6 +445,8 @@ mod test {
         assert_eq!(is.read_char().is_none(), true);
         assert_eq!(is.read_char().is_none(), true);
         assert_eq!(is.read_char().is_none(), true);
+        assert_eq!(is.read_char().is_none(), true);
+        is.unread();
         assert_eq!(is.read_char().is_none(), true);
         is.unread();
         assert_eq!(is.read_char().is_none(), true);

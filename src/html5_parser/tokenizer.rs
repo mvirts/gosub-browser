@@ -1,5 +1,6 @@
 use crate::html5_parser::input_stream::InputStream;
 use crate::html5_parser::parse_errors::ParserError;
+use crate::html5_parser::parse_errors::ParserError::{EofBeforeTagName, EofInCdata, EofInComment, EofInDoctype, EofInScriptHtmlCommentLikeText, EofInTag};
 use crate::html5_parser::token::Token;
 use crate::html5_parser::token_states::State;
 
@@ -103,9 +104,6 @@ impl<'a> Tokenizer<'a> {
     // Consumes the input stream. Continues until the stream is completed or a token has been generated.
     fn consume_stream(&mut self) {
         loop {
-            // println!("state: {:?}", self.state);
-            // println!("consumed: {:?}", self.consumed);
-
             // Something is already in the token buffer, so we can return it.
             if self.token_queue.len() > 0 {
                 return
@@ -248,8 +246,8 @@ impl<'a> Tokenizer<'a> {
                             self.current_token = Some(Token::CommentToken{
                                 value: "".into(),
                             });
-                            self.stream.unread();
                             self.parse_error(ParserError::UnexpectedQuestionMarkInsteadOfTagName);
+                            self.stream.unread();
                             self.state = State::BogusCommentState;
                         }
                         None => {
@@ -521,15 +519,248 @@ impl<'a> Tokenizer<'a> {
                         self.state = State::RawTextState;
                     }
                 }
-                // State::ScriptDataLessThenSignState => {}
-                // State::ScriptDataEndTagOpenState => {}
-                // State::ScriptDataEndTagNameState => {}
-                // State::ScriptDataEscapeStartState => {}
-                // State::ScriptDataEscapeStartDashState => {}
-                // State::ScriptDataEscapedState => {}
-                // State::ScriptDataEscapedDashState => {}
-                // State::ScriptDataEscapedLessThanSignState => {}
-                // State::ScriptDataEscapedEndTagOpenState => {}
+                State::ScriptDataLessThenSignState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('/') => {
+                            self.temporary_buffer = vec![];
+                            self.state = State::ScriptDataEndTagOpenState;
+                        },
+                        Some('!') => {
+                            self.state = State::ScriptDataEscapeStartState;
+                            self.consume('<');
+                            self.consume('!');
+                        },
+                        _ => {
+                            self.consume('<');
+                            self.stream.unread();
+                            self.state = State::ScriptDataState;
+                        },
+                    }
+                }
+                State::ScriptDataEndTagOpenState => {
+                    let c = self.stream.read_char();
+                    if c.is_none() {
+                        self.consume('<');
+                        self.consume('!');
+                        self.stream.unread();
+                        self.state = State::ScriptDataState;
+                        continue;
+                    }
+
+                    if c.unwrap().is_ascii_alphanumeric() {
+                        self.current_token = Some(Token::EndTagToken{
+                            name: "".into(),
+                        });
+
+                        self.stream.unread();
+                        self.state = State::ScriptDataEndTagNameState;
+                    } else {
+                        self.consume('<');
+                        self.consume('!');
+                        self.stream.unread();
+                        self.state = State::ScriptDataState;
+                    }
+                }
+                State::ScriptDataEndTagNameState => {
+                    let c = self.stream.read_char();
+
+                    // we use this flag because a lot of matches will actually do the same thing
+                    let mut consume_anything_else = false;
+
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                self.state = State::BeforeAttributeNameState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        Some('/') => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                self.state = State::SelfClosingStartState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        Some('>') => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                let s: String = self.temporary_buffer.iter().collect::<String>();
+                                self.set_name_in_current_token(s);
+
+                                self.last_start_token = String::new();
+                                self.push_current_token_to_queue();
+                                self.state = State::DataState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        Some(ch @ 'A'..='Z') => {
+                            self.temporary_buffer.push(to_lowercase!(ch));
+                        }
+                        Some(ch @ 'a'..='z') => {
+                            self.temporary_buffer.push(ch);
+                        }
+                        _ => {
+                            consume_anything_else = true;
+                        },
+                    }
+
+                    if consume_anything_else {
+                        self.consume('<');
+                        self.consume('/');
+                        for c in self.temporary_buffer.clone() {
+                            self.consume(c);
+                        }
+                        self.temporary_buffer.clear();
+
+                        self.stream.unread();
+                        self.state = State::ScriptDataState;
+                    }
+                }
+                State::ScriptDataEscapeStartState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('-') => {
+                            self.consume('-');
+                            self.state = State::ScriptDataEscapedDashState;
+                        },
+                        _ => {
+                            self.stream.unread();
+                            self.state = State::ScriptDataState;
+                        },
+                    }
+                }
+                State::ScriptDataEscapeStartDashState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('-') => {
+                            self.consume('-');
+                            self.state = State::ScriptDataDoubleEscapedDashDashState;
+                        },
+                        _ => {
+                            self.stream.unread();
+                            self.state = State::ScriptDataState;
+                        },
+                    }
+                }
+                State::ScriptDataEscapedState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('-') => {
+                            self.consume('-');
+                            self.state = State::ScriptDataEscapedDashState;
+                        },
+                        Some('<') => {
+                            self.state = State::ScriptDataEscapedLessThanSignState;
+                        },
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.consume(CHAR_REPLACEMENT);
+                        },
+                        None => {
+                            self.parse_error(ParserError::EofInScriptHtmlCommentLikeText);
+                            self.state = State::DataState;
+                        },
+                        _ => {
+                            self.consume(c.unwrap());
+                        },
+                    }
+                }
+                State::ScriptDataEscapedDashState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('-') => {
+                            self.consume('-');
+                            self.state = State::ScriptDataDoubleEscapedDashDashState;
+                        },
+                        Some('<') => {
+                            self.state = State::ScriptDataEscapedLessThanSignState;
+                        },
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.consume(CHAR_REPLACEMENT);
+                            self.state = State::ScriptDataEscapedState;
+                        },
+                        None => {
+                            self.parse_error(ParserError::EofInScriptHtmlCommentLikeText);
+                            self.state = State::DataState;
+                        },
+                        _ => {
+                            self.stream.unread();
+                            self.state = State::ScriptDataEscapedState;
+                        },
+                    }
+                }
+                State::ScriptDataDoubleEscapedDashDashState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('-') => self.consume('-'),
+                        Some('<') => self.state = State::ScriptDataEscapedLessThanSignState,
+                        Some('>') => {
+                            self.consume('>');
+                            self.state = State::ScriptDataState;
+                        },
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.consume(CHAR_REPLACEMENT);
+                            self.state = State::ScriptDataEscapedState;
+                        },
+                        None => {
+                            self.parse_error(ParserError::EofInScriptHtmlCommentLikeText);
+                            self.state = State::DataState;
+                        },
+                        _ => {
+                            self.consume(c.unwrap());
+                            self.state = State::ScriptDataEscapedState;
+                        },
+                    }
+                }
+                State::ScriptDataEscapedLessThanSignState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('/') => {
+                            self.temporary_buffer = vec![];
+                            self.state = State::ScriptDataEscapedEndTagOpenState;
+                        },
+                        _ => {
+                            if c.is_some() && c.unwrap().is_ascii_alphanumeric() {
+                                self.temporary_buffer = vec![];
+                                self.consume('<');
+                                self.stream.unread();
+                                self.state = State::ScriptDataDoubleEscapeStartState;
+                                continue;
+                            }
+                            // anything else
+                            self.consume('<');
+                            self.stream.unread();
+                            self.state = State::ScriptDataEscapedState;
+                        },
+                    }
+                }
+                State::ScriptDataEscapedEndTagOpenState => {
+                    let c = self.stream.read_char();
+
+                    if c.is_some() && c.unwrap().is_ascii_alphanumeric() {
+                        self.current_token = Some(Token::EndTagToken{
+                            name: "".into(),
+                        });
+
+                        self.consume('<');
+                        self.stream.unread();
+                        self.state = State::ScriptDataDoubleEscapeStartState;
+                        continue;
+                    }
+
+                    // anything else
+                    self.consume('<');
+                    self.consume('/');
+                    self.stream.unread();
+                    self.state = State::ScriptDataEscapedState;
+                }
                 // State::ScriptDataEscapedEndTagNameState => {}
                 // State::ScriptDataDoubleEscapeStartState => {}
                 // State::ScriptDataDoubleEscapedState => {}
@@ -802,7 +1033,43 @@ impl<'a> Tokenizer<'a> {
                 // State::DocTypeSystemIdentifierSingleQuotedState => {}
                 // State::AfterDocTypeSystemIdentifiedState => {}
                 // State::BogusDocTypeState => {}
-                // State::CDataSectionState => {}
+                State::CDataSectionState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(']') => {
+                            self.state = State::CDataSectionBracketState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInCdata);
+                            self.push_current_token_to_queue();
+                            self.state = State::DataState;
+                        },
+                        _ => self.consume(c.unwrap()),
+                    }
+                },
+                State::CDataSectionBracketState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(']') => self.state = State::CDataSectionEndState,
+                        _ => {
+                            self.consume(']');
+                            self.stream.unread();
+                            self.state = State::CDataSectionState;
+                        }
+                    }
+                },
+                State::CDataSectionEndState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(']') => self.state = State::CDataSectionEndState,
+                        Some('>') => self.state = State::DataState,
+                        _ => {
+                            self.consume(']');
+                            self.stream.unread();
+                            self.state = State::CDataSectionState;
+                        }
+                    }
+                }
                 _ => {
                     panic!("state {:?} not implemented", self.state);
                 }
@@ -850,19 +1117,27 @@ impl<'a> Tokenizer<'a> {
 
     // Creates a parser log error message
     pub(crate) fn parse_error(&mut self, error: ParserError) {
-        // unread char, so we are back one position (the char we just read)
-        // self.stream.unread();
+        // Hack: when encountering eof, we need to have the previous position, not the current one.
+        let mut pos = self.stream.get_position(self.stream.position.offset - 1);
+        match error {
+            EofBeforeTagName |
+            EofInCdata |
+            EofInComment |
+            EofInDoctype |
+            EofInScriptHtmlCommentLikeText |
+            EofInTag => {
+                pos = self.stream.get_position(self.stream.position.offset);
+            }
+            _ => {}
+        }
 
         // Add to parse log
         self.errors.push(ParseError{
             message: error.as_str().to_string(),
-            line: self.stream.position.line,
-            col: self.stream.position.col,
-            offset: self.stream.position.offset,
+            line: pos.line,
+            col: pos.col,
+            offset: pos.offset,
         });
-
-        // And reread again
-        // self.stream.read_char();
     }
 
     // Set is_closing_tag in current token
