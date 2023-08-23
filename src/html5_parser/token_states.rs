@@ -24,6 +24,7 @@ pub enum State {
     ScriptDataEscapeStartDashState,
     ScriptDataEscapedState,
     ScriptDataEscapedDashState,
+    ScriptDataEscapedDashDashState,
     ScriptDataEscapedLessThanSignState,
     ScriptDataEscapedEndTagOpenState,
     ScriptDataEscapedEndTagNameState,

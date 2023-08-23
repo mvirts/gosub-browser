@@ -77,7 +77,7 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test)
 {
-    // if test.description != "Raw NUL replacement" {
+    // if test.description != "</script> in script HTML comment" {
     //     return;
     // }
 

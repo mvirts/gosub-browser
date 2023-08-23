@@ -527,9 +527,9 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::ScriptDataEndTagOpenState;
                         },
                         Some('!') => {
-                            self.state = State::ScriptDataEscapeStartState;
                             self.consume('<');
                             self.consume('!');
+                            self.state = State::ScriptDataEscapeStartState;
                         },
                         _ => {
                             self.consume('<');
@@ -548,7 +548,7 @@ impl<'a> Tokenizer<'a> {
                         continue;
                     }
 
-                    if c.unwrap().is_ascii_alphanumeric() {
+                    if c.unwrap().is_ascii_alphabetic() {
                         self.current_token = Some(Token::EndTagToken{
                             name: "".into(),
                         });
@@ -675,7 +675,7 @@ impl<'a> Tokenizer<'a> {
                     match c {
                         Some('-') => {
                             self.consume('-');
-                            self.state = State::ScriptDataDoubleEscapedDashDashState;
+                            self.state = State::ScriptDataEscapedDashDashState;
                         },
                         Some('<') => {
                             self.state = State::ScriptDataEscapedLessThanSignState;
@@ -695,15 +695,19 @@ impl<'a> Tokenizer<'a> {
                         },
                     }
                 }
-                State::ScriptDataDoubleEscapedDashDashState => {
+                State::ScriptDataEscapedDashDashState => {
                     let c = self.stream.read_char();
                     match c {
-                        Some('-') => self.consume('-'),
-                        Some('<') => self.state = State::ScriptDataEscapedLessThanSignState,
+                        Some('-') => {
+                            self.consume('-');
+                        },
+                        Some('<') => {
+                            self.state = State::ScriptDataEscapedLessThanSignState;
+                        },
                         Some('>') => {
                             self.consume('>');
                             self.state = State::ScriptDataState;
-                        },
+                        }
                         Some(CHAR_NUL) => {
                             self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.consume(CHAR_REPLACEMENT);
@@ -714,7 +718,7 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::DataState;
                         },
                         _ => {
-                            self.consume(c.unwrap());
+                            self.stream.unread();
                             self.state = State::ScriptDataEscapedState;
                         },
                     }
@@ -727,7 +731,7 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::ScriptDataEscapedEndTagOpenState;
                         },
                         _ => {
-                            if c.is_some() && c.unwrap().is_ascii_alphanumeric() {
+                            if c.is_some() && c.unwrap().is_ascii_alphabetic() {
                                 self.temporary_buffer = vec![];
                                 self.consume('<');
                                 self.stream.unread();
@@ -744,14 +748,13 @@ impl<'a> Tokenizer<'a> {
                 State::ScriptDataEscapedEndTagOpenState => {
                     let c = self.stream.read_char();
 
-                    if c.is_some() && c.unwrap().is_ascii_alphanumeric() {
+                    if c.is_some() && c.unwrap().is_ascii_alphabetic() {
                         self.current_token = Some(Token::EndTagToken{
                             name: "".into(),
                         });
 
-                        self.consume('<');
                         self.stream.unread();
-                        self.state = State::ScriptDataDoubleEscapeStartState;
+                        self.state = State::ScriptDataEscapedEndTagNameState;
                         continue;
                     }
 
@@ -761,13 +764,214 @@ impl<'a> Tokenizer<'a> {
                     self.stream.unread();
                     self.state = State::ScriptDataEscapedState;
                 }
-                // State::ScriptDataEscapedEndTagNameState => {}
-                // State::ScriptDataDoubleEscapeStartState => {}
-                // State::ScriptDataDoubleEscapedState => {}
-                // State::ScriptDataDoubleEscapedDashState => {}
-                // State::ScriptDataDoubleEscapedDashDashState => {}
-                // State::ScriptDataDoubleEscapedLessThanSignState => {}
-                // State::ScriptDataDoubleEscapeEndState => {}
+                State::ScriptDataEscapedEndTagNameState => {
+                    let c = self.stream.read_char();
+
+                    // we use this flag because a lot of matches will actually do the same thing
+                    let mut consume_anything_else = false;
+
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                self.state = State::BeforeAttributeNameState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        Some('/') => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                self.state = State::SelfClosingStartState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        Some('>') => {
+                            if self.is_appropriate_end_token(&self.temporary_buffer) {
+                                let s: String = self.temporary_buffer.iter().collect::<String>();
+                                self.set_name_in_current_token(s);
+
+                                self.last_start_token = String::new();
+                                self.push_current_token_to_queue();
+                                self.state = State::DataState;
+                            } else {
+                                consume_anything_else = true;
+                            }
+                        },
+                        Some(ch @ 'A'..='Z') => {
+                            self.temporary_buffer.push(to_lowercase!(ch));
+                        }
+                        Some(ch @ 'a'..='z') => {
+                            self.temporary_buffer.push(ch);
+                        }
+                        _ => {
+                            consume_anything_else = true;
+                        },
+                    }
+
+                    if consume_anything_else {
+                        self.consume('<');
+                        self.consume('/');
+                        for c in self.temporary_buffer.clone() {
+                            self.consume(c);
+                        }
+                        self.temporary_buffer.clear();
+
+                        self.stream.unread();
+                        self.state = State::ScriptDataEscapedState;
+                    }
+                }
+                State::ScriptDataDoubleEscapeStartState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) |
+                        Some('/') |
+                        Some('>') => {
+                            if self.temporary_buffer.iter().collect::<String>().eq("script") {
+                                self.state = State::ScriptDataDoubleEscapedState;
+                            } else {
+                                self.state = State::ScriptDataEscapedState;
+                            }
+                            self.consume(c.unwrap());
+                        }
+                        Some(ch @ 'A'..='Z') => {
+                            self.temporary_buffer.push(to_lowercase!(ch));
+                            self.consume(ch);
+                        },
+                        Some(ch @ 'a'..='z') => {
+                            self.temporary_buffer.push(ch);
+                            self.consume(ch);
+                        },
+                        _ => {
+                            self.stream.unread();
+                            self.state = State::ScriptDataEscapedState;
+                        }
+                    }
+                },
+                State::ScriptDataDoubleEscapedState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('-') => {
+                            self.state = State::ScriptDataDoubleEscapedDashState;
+                            self.consume('-');
+                        }
+                        Some('<') => {
+                            self.state = State::ScriptDataDoubleEscapedLessThanSignState;
+                            self.consume('<');
+                        },
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.consume(CHAR_REPLACEMENT);
+                        },
+                        None => {
+                            self.parse_error(ParserError::EofInScriptHtmlCommentLikeText);
+                            self.state = State::DataState;
+                        }
+                        _ => self.consume(c.unwrap()),
+                    }
+                }
+                State::ScriptDataDoubleEscapedDashState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('-') => {
+                            self.state = State::ScriptDataDoubleEscapedDashState;
+                            self.consume('-');
+                        }
+                        Some('<') => {
+                            self.state = State::ScriptDataDoubleEscapedLessThanSignState;
+                            self.consume('<');
+                        },
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.consume(CHAR_REPLACEMENT);
+                            self.state = State::ScriptDataDoubleEscapedState;
+                        },
+                        None => {
+                            self.parse_error(ParserError::EofInScriptHtmlCommentLikeText);
+                            self.state = State::DataState;
+                        }
+                        _ => {
+                            self.consume(c.unwrap());
+                            self.state = State::ScriptDataDoubleEscapedState;
+                        },
+                    }
+                }
+                State::ScriptDataDoubleEscapedDashDashState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('-') => self.consume('-'),
+                        Some('<') => {
+                            self.consume('<');
+                            self.state = State::ScriptDataEscapedLessThanSignState;
+                        },
+                        Some('>') => {
+                            self.consume('>');
+                            self.state = State::ScriptDataState;
+                        },
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.consume(CHAR_REPLACEMENT);
+                            self.state = State::ScriptDataDoubleEscapedState;
+                        },
+                        None => {
+                            self.parse_error(ParserError::EofInScriptHtmlCommentLikeText);
+                            self.state = State::DataState;
+                        },
+                        _ => {
+                            self.consume(c.unwrap());
+                            self.state = State::ScriptDataDoubleEscapedState;
+                        },
+                    }
+                }
+                State::ScriptDataDoubleEscapedLessThanSignState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('/') => {
+                            self.temporary_buffer = vec![];
+                            self.consume('/');
+                            self.state = State::ScriptDataDoubleEscapeEndState;
+                        }
+                        _ => {
+                            self.stream.unread();
+                            self.state = State::ScriptDataDoubleEscapedState;
+                        },
+                    }
+                }
+                State::ScriptDataDoubleEscapeEndState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) |
+                        Some('/') |
+                        Some('>') => {
+                            if self.temporary_buffer.iter().collect::<String>().eq("script") {
+                                self.state = State::ScriptDataEscapedState;
+                            } else {
+                                self.state = State::ScriptDataDoubleEscapedState;
+                            }
+                            self.consume(c.unwrap());
+                        }
+                        Some(ch @ 'A'..='Z') => {
+                            self.temporary_buffer.push(to_lowercase!(ch));
+                            self.consume(ch);
+                        },
+                        Some(ch @ 'a'..='z') => {
+                            self.temporary_buffer.push(ch);
+                            self.consume(ch);
+                        },
+                        _ => {
+                            self.stream.unread();
+                            self.state = State::ScriptDataDoubleEscapedState;
+                        }
+                    }
+                }
                 State::BeforeAttributeNameState => {
                     let c = self.stream.read_char();
                     match c {
