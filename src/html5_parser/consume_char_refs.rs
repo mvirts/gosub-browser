@@ -21,35 +21,49 @@ pub enum CcrState {
     NumericalCharacterReferenceEndState,
 }
 
+macro_rules! consume_temp_buffer {
+    ($self:expr, $as_attribute:expr) => {
+        for c in $self.temporary_buffer.clone() {
+            if $as_attribute {
+                $self.current_attr_value.push(c);
+            } else {
+                $self.consume(c);
+            }
+        }
+        $self.temporary_buffer.clear();
+    };
+}
+
 impl<'a> Tokenizer<'a> {
     // Consumes a character reference and places this in the tokenizer consume buffer
     // ref: 8.2.4.69 Tokenizing character references
     pub fn consume_character_reference(&mut self, _additional_allowed_char: Option<char>, as_attribute: bool)
     {
-        let mut tmp_buf = String::new();
         let mut ccr_state = CcrState::CharacterReferenceState;
         let mut char_ref_code: u32 = 0;
 
         loop {
             match ccr_state {
                 CcrState::CharacterReferenceState => {
-                    tmp_buf.clear();
+                    self.temporary_buffer = vec!['&'];
 
                     let c = self.stream.read_char();
                     match c {
-                        None => return,
+                        None => {
+                            consume_temp_buffer!(self, as_attribute);
+
+                            return
+                        },
                         Some('A'..='Z') | Some('a'..='z') | Some('0'..='9') => {
                             self.stream.unread();
                             ccr_state = CcrState::NamedCharacterReferenceState;
                         },
                         Some('#') => {
-                            tmp_buf.push(c.unwrap());
+                            self.temporary_buffer.push(c.unwrap());
                             ccr_state = CcrState::NumericCharacterReferenceState;
                         },
                         _ => {
-                            for c in tmp_buf.chars() {
-                                self.consume(c);
-                            }
+                            consume_temp_buffer!(self, as_attribute);
 
                             self.stream.unread();
                             return;
@@ -57,63 +71,27 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 CcrState::NamedCharacterReferenceState => {
+                    let entity_chars: Option<Vec<char>> = self.find_entity().map(|entity| entity.chars().collect());
 
-                    let entity = self.find_entity();
-                    match entity {
-                        Some => {
-                            if entity.chars().last() != ';' {
-                                self.parse_error(ParserError::MissingSemicolonAfterCharacterReference);
-                            }
-
-                            self.temporary_buffer.clear();
-                            for c in entity.chars() {
-                                self.temporary_buffer.push(c);
-                            }
-                        }
-                        None => {
-                            flushcodepoints;
-                            ccr_state = CcrState::AmbiguousAmpersandState;
-                        },
-                    }
-
-
-                    loop {
-                        let c = self.stream.read_char();
-                        if c.is_none() {
-                            while tmp_buf.len() > 0 {
-                                tmp_buf.pop();
-                                self.stream.unread();
-                            }
-                            self.consume('&');
-                            return;
+                    if let Some(chars) = entity_chars {
+                        if chars.last().unwrap_or(&'\0') != &';' {
+                            self.parse_error(ParserError::MissingSemicolonAfterCharacterReference);
                         }
 
-                        tmp_buf.push(c.unwrap());
-                        let candidates = self.find_entity_candidates(tmp_buf.as_str());
-
-                        // If we found a complete match and it's the only one we can match, we are done
-                        if candidates.len() == 1 && candidates.get(0).unwrap().to_string().len() == tmp_buf.len() {
-                            self.consume_string(*TOKEN_NAMED_CHARS.get(candidates.get(0).unwrap()).unwrap());
-                            return
-                        }
-
-                        // If we find a ; or no more candidates could be found, do a backtrack
-                        if c.unwrap() == ';' || candidates.len() == 0 {
-                            // found a ;. If we don't match, backtrack to find a match
-                            while tmp_buf.len() > 0 {
-                                tmp_buf.pop();
-                                self.stream.unread();
-
-                                // Found a complete match, this is the longest, so use that one
-                                if TOKEN_NAMED_CHARS.contains_key(tmp_buf.as_str()) {
-                                    self.consume_string(*TOKEN_NAMED_CHARS.get(tmp_buf.as_str()).unwrap());
-                                }
+                        // Flush codepoints consumed as character reference
+                        for c in chars {
+                            if as_attribute {
+                                self.current_attr_value.push(c);
+                            } else {
+                                self.consume(c);
                             }
-
-                            // no backtrack matches found
-                            self.consume('&');
-                            return
                         }
+                        self.temporary_buffer.clear();
+
+                        return;
+                    } else {
+                        consume_temp_buffer!(self, as_attribute);
+                        ccr_state = CcrState::AmbiguousAmpersandState;
                     }
                 }
                 CcrState::AmbiguousAmpersandState => {
@@ -145,7 +123,7 @@ impl<'a> Tokenizer<'a> {
                     match c {
                         None => return,
                         Some('X') | Some('x') => {
-                            tmp_buf.push(c.unwrap());
+                            self.temporary_buffer.push(c.unwrap());
                             ccr_state = CcrState::HexadecimalCharacterReferenceStartState;
                         }
                         _ => {
@@ -164,9 +142,7 @@ impl<'a> Tokenizer<'a> {
                         }
                         _ => {
                             self.parse_error(ParserError::AbsenceOfDigitsInNumericCharacterReference);
-                            for c in tmp_buf.chars() {
-                                self.consume(c);
-                            }
+                            consume_temp_buffer!(self, as_attribute);
 
                             self.stream.unread();
                             return;
@@ -183,9 +159,7 @@ impl<'a> Tokenizer<'a> {
                         }
                         _ => {
                             self.parse_error(ParserError::AbsenceOfDigitsInNumericCharacterReference);
-                            for c in tmp_buf.chars() {
-                                self.consume(c);
-                            }
+                            consume_temp_buffer!(self, as_attribute);
 
                             self.stream.unread();
                             return;
@@ -259,18 +233,15 @@ impl<'a> Tokenizer<'a> {
                     }
                     if self.is_control_char(char_ref_code) {
                         self.parse_error(ParserError::ControlCharacterReference);
+                        char_ref_code = CHAR_REPLACEMENT as u32;
                     }
 
                     if TOKEN_REPLACEMENTS.contains_key(&char_ref_code) {
                         char_ref_code = *TOKEN_REPLACEMENTS.get(&char_ref_code).unwrap() as u32;
                     }
 
-                    tmp_buf = String::new();
-                    tmp_buf.push(char::from_u32(char_ref_code).unwrap_or(CHAR_REPLACEMENT));
-
-                    for c in tmp_buf.chars() {
-                        self.consume(c);
-                    }
+                    self.temporary_buffer = vec![char::from_u32(char_ref_code).unwrap_or(CHAR_REPLACEMENT)];
+                    consume_temp_buffer!(self, as_attribute);
 
                     return;
                 }
@@ -303,33 +274,14 @@ impl<'a> Tokenizer<'a> {
         return (0x0000..=0x001F).contains(&num) || (0x007F..=0x009F).contains(&num);
     }
 
-    // /*
-    //  * Find candidates in the token named entities that start with the given prefix.
-    //  * For instance: the prefix 'no' would return 'not', 'notin' etc..
-    //  *
-    //  * This will iterate over EACH entity, which takes time. At a later stage, we want to
-    //  * do this with an tree index to make it (very) fast.
-    //  */
-    // fn find_entity_candidates(&self, prefix: &str) -> Vec<&'static str> {
-    //     let mut found = vec![];
-    //
-    //     for key in TOKEN_NAMED_CHARS.keys() {
-    //         if key.starts_with(prefix) {
-    //             found.push(*key);
-    //         }
-    //     }
-    //
-    //     return found;
-    // }
-
     // Finds the longest entity from the current position in the stream. Returns the entity
     // replacement OR None when no entity has been found.
-    fn find_entity(&self) -> Option<&str> {
-        let s: &str = self.stream.look_ahead_slice(*LONGEST_ENTITY_LENGTH);
-        for i in (0..s.len()).rev() {
+    fn find_entity(&mut self) -> Option<&str> {
+        let s= self.stream.look_ahead_slice(*LONGEST_ENTITY_LENGTH);
+        for i in (0..=s.len()).rev() {
             if TOKEN_NAMED_CHARS.contains_key(&s[0..i]) {
                 // Move forward with the number of chars matching
-                self.stream.seek(self.stream.position.offset + i);
+                self.stream.seek(self.stream.position.offset + i as i64);
                 return Some(TOKEN_NAMED_CHARS.get(&s[0..i]).unwrap());
             }
         }
@@ -374,17 +326,17 @@ mod tests {
         entity_3: ("&#xdeadbeef;", "�")     // replace with replacement char
         entity_4: ("&#xd888;", "�")         // replace with replacement char
         entity_5: ("&#xbeef;", "뻯")
-        entity_6: ("&#x10;", "\u{10}")                // reserved codepoint
+        entity_6: ("&#x10;", "�")                // reserved codepoint
         entity_7: ("&#;", "&#;")
         entity_8: ("&;", "&;")
         entity_9: ("&", "&")
-        entity_10: ("&#x1;", "")                // reserved codepoint
-        entity_11: ("&#x0008;", "")             // reserved codepoint
-        entity_12: ("&#0008;", "")              // reserved codepoint
-        entity_13: ("&#8;", "")                 // reserved codepoint
+        entity_10: ("&#x1;", "�")                // reserved codepoint
+        entity_11: ("&#x0008;", "�")             // reserved codepoint
+        entity_12: ("&#0008;", "�")              // reserved codepoint
+        entity_13: ("&#8;", "�")                 // reserved codepoint
         entity_14: ("&#x0009;", "\t")
-        entity_15: ("&#x007F;", "")             // reserved codepoint
-        entity_16: ("&#xFDD0;", "")             // reserved codepoint
+        entity_15: ("&#x007F;", "�")             // reserved codepoint
+        entity_16: ("&#xFDD0;", "�")             // reserved codepoint
 
         // Entities
         entity_100: ("&copy;", "©")
@@ -396,7 +348,7 @@ mod tests {
         entity_106: ("&notin;", "∉")
         entity_107: ("&fo", "&fo")
         entity_108: ("&xxx", "&xxx")
-        entity_109: ("&copy", "&copy")
+        entity_109: ("&copy", "©")
         entity_110: ("&copy ", "© ")
         entity_111: ("&copya", "©a")
         entity_112: ("&copya;", "©a;")

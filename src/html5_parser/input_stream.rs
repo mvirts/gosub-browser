@@ -249,6 +249,14 @@ impl InputStream {
         }
     }
 
+    // Looks ahead in the stream and returns len characters
+    pub(crate) fn look_ahead_slice(&self, len: usize) -> String {
+        let end_pos = std::cmp::min(self.length, self.position.offset as usize + len);
+
+        let slice = &self.buffer[self.position.offset as usize..end_pos];
+        slice.iter().collect()
+    }
+
     // Looks ahead in the stream, can use an optional index if we want to seek further
     // (or back) in the stream.
     pub(crate) fn look_ahead(&self, idx: i32) -> Option<char> {
@@ -431,6 +439,20 @@ mod test {
         assert_eq!(is.look_ahead(-1), None);
         is.seek(4);
         assert_eq!(is.look_ahead(-1).unwrap(), 'c');
+
+
+        is.seek(0);
+        assert_eq!(is.look_ahead_slice(1), "a");
+        assert_eq!(is.look_ahead_slice(2), "ab");
+        assert_eq!(is.look_ahead_slice(3), "ab👽");
+        assert_eq!(is.look_ahead_slice(4), "ab👽c");
+        assert_eq!(is.look_ahead_slice(5), "ab👽cd");
+        assert_eq!(is.look_ahead_slice(6), "ab👽cd");
+        assert_eq!(is.look_ahead_slice(100), "ab👽cd");
+
+        is.seek(3);
+        assert_eq!(is.look_ahead_slice(1), "c");
+        assert_eq!(is.look_ahead_slice(2), "cd");
     }
 
     #[test]

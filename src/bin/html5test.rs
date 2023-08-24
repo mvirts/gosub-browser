@@ -77,7 +77,7 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test)
 {
-    if test.description != "Bad charref in RCDATA" {
+    if test.description != "Non BMP-charref in attribute" {
         return;
     }
 
@@ -179,9 +179,27 @@ fn match_token(have: Token, expected: &Vec<Value>, double_escaped: bool) -> bool
             println!("❌ Incorrect doctype (not implemented in testsuite)");
             return false;
         }
-        Token::StartTagToken{..} => {
-            println!("❌ Incorrect start tag (not implemented in testsuite)");
-            return false;
+        Token::StartTagToken{name, is_self_closing, attributes} => {
+            let output = expected.get(1).unwrap().as_str().unwrap();
+            // check name
+            if name.ne(&output) {
+                println!("❌ Incorrect start tag (wanted: '{}', got '{}'", name, output);
+                return false;
+            }
+
+            if attributes.len() == 0 {
+                println!("ok");
+            }
+
+            // check self-closing
+            // if is_self_closing != expected.get(2).unwrap().as_bool().unwrap() {
+            //     println!("❌ Incorrect start tag (self-closing is not {}", if is_self_closing { "true" } else { "false"});
+            //     return false;
+            // }
+
+            // check attrs
+
+
         }
         Token::EndTagToken{name} => {
             let output_ref = expected.get(1).unwrap().as_str().unwrap();
@@ -206,7 +224,7 @@ fn match_token(have: Token, expected: &Vec<Value>, double_escaped: bool) -> bool
             let output_ref = expected.get(1).unwrap().as_str().unwrap();
             let output = if double_escaped { escape(output_ref) } else { output_ref.to_string() };
 
-            if value.as_str() != output {
+            if value.ne(&output) {
                 println!("❌ Incorrect text found in text token");
                 println!("    wanted: '{}', got: '{}'", output, value.as_str());
                 return false;

@@ -540,7 +540,7 @@ impl<'a> Tokenizer<'a> {
                     let c = self.stream.read_char();
                     if c.is_none() {
                         self.consume('<');
-                        self.consume('!');
+                        self.consume('/');
                         self.stream.unread();
                         self.state = State::ScriptDataState;
                         continue;
@@ -555,7 +555,7 @@ impl<'a> Tokenizer<'a> {
                         self.state = State::ScriptDataEndTagNameState;
                     } else {
                         self.consume('<');
-                        self.consume('!');
+                        self.consume('/');
                         self.stream.unread();
                         self.state = State::ScriptDataState;
                     }
