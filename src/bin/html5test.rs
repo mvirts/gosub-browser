@@ -77,9 +77,9 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test)
 {
-    // if test.description != "Non BMP-charref in RCDATA" {
-    //     return;
-    // }
+    if test.description != "Bad charref in RCDATA" {
+        return;
+    }
 
     println!("🧪 running test: {}", test.description);
 

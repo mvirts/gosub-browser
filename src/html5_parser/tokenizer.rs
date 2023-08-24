@@ -1,6 +1,5 @@
 use crate::html5_parser::input_stream::InputStream;
 use crate::html5_parser::parse_errors::ParserError;
-use crate::html5_parser::parse_errors::ParserError::{EofBeforeTagName, EofInCdata, EofInComment, EofInDoctype, EofInScriptHtmlCommentLikeText, EofInTag};
 use crate::html5_parser::token::Token;
 use crate::html5_parser::token_states::State;
 
@@ -186,11 +185,10 @@ impl<'a> Tokenizer<'a> {
                     match c {
                         Some('<') => self.state = State::ScriptDataLessThenSignState,
                         Some(CHAR_NUL) => {
-                            self.consume(CHAR_REPLACEMENT);
                             self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.consume(CHAR_REPLACEMENT);
                         },
                         None => {
-                            // EOF
                             if self.has_consumed_data() {
                                 self.token_queue.push(Token::TextToken { value: self.get_consumed_str().clone() });
                                 self.clear_consume_buffer();
@@ -626,7 +624,7 @@ impl<'a> Tokenizer<'a> {
                     match c {
                         Some('-') => {
                             self.consume('-');
-                            self.state = State::ScriptDataEscapedDashState;
+                            self.state = State::ScriptDataEscapeStartDashState;
                         },
                         _ => {
                             self.stream.unread();
@@ -639,7 +637,7 @@ impl<'a> Tokenizer<'a> {
                     match c {
                         Some('-') => {
                             self.consume('-');
-                            self.state = State::ScriptDataDoubleEscapedDashDashState;
+                            self.state = State::ScriptDataEscapedDashDashState;
                         },
                         _ => {
                             self.stream.unread();
@@ -857,12 +855,12 @@ impl<'a> Tokenizer<'a> {
                     let c = self.stream.read_char();
                     match c {
                         Some('-') => {
-                            self.state = State::ScriptDataDoubleEscapedDashState;
                             self.consume('-');
+                            self.state = State::ScriptDataDoubleEscapedDashState;
                         }
                         Some('<') => {
-                            self.state = State::ScriptDataDoubleEscapedLessThanSignState;
                             self.consume('<');
+                            self.state = State::ScriptDataDoubleEscapedLessThanSignState;
                         },
                         Some(CHAR_NUL) => {
                             self.parse_error(ParserError::UnexpectedNullCharacter);
@@ -907,7 +905,7 @@ impl<'a> Tokenizer<'a> {
                         Some('-') => self.consume('-'),
                         Some('<') => {
                             self.consume('<');
-                            self.state = State::ScriptDataEscapedLessThanSignState;
+                            self.state = State::ScriptDataDoubleEscapedLessThanSignState;
                         },
                         Some('>') => {
                             self.consume('>');
@@ -1324,12 +1322,12 @@ impl<'a> Tokenizer<'a> {
         // Hack: when encountering eof, we need to have the previous position, not the current one.
         let mut pos = self.stream.get_position(self.stream.position.offset - 1);
         match error {
-            EofBeforeTagName |
-            EofInCdata |
-            EofInComment |
-            EofInDoctype |
-            EofInScriptHtmlCommentLikeText |
-            EofInTag => {
+            ParserError::EofBeforeTagName |
+            ParserError::EofInCdata |
+            ParserError::EofInComment |
+            ParserError::EofInDoctype |
+            ParserError::EofInScriptHtmlCommentLikeText |
+            ParserError::EofInTag => {
                 pos = self.stream.get_position(self.stream.position.offset);
             }
             _ => {}

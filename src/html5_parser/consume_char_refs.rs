@@ -3,6 +3,9 @@ use crate::html5_parser::token_named_characters::TOKEN_NAMED_CHARS;
 use crate::html5_parser::token_replacements::TOKEN_REPLACEMENTS;
 use crate::html5_parser::tokenizer::Tokenizer;
 
+extern crate lazy_static;
+use lazy_static::lazy_static;
+
 use super::tokenizer::CHAR_REPLACEMENT;
 
 // Different states for the character references
@@ -54,6 +57,26 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 CcrState::NamedCharacterReferenceState => {
+
+                    let entity = self.find_entity();
+                    match entity {
+                        Some => {
+                            if entity.chars().last() != ';' {
+                                self.parse_error(ParserError::MissingSemicolonAfterCharacterReference);
+                            }
+
+                            self.temporary_buffer.clear();
+                            for c in entity.chars() {
+                                self.temporary_buffer.push(c);
+                            }
+                        }
+                        None => {
+                            flushcodepoints;
+                            ccr_state = CcrState::AmbiguousAmpersandState;
+                        },
+                    }
+
+
                     loop {
                         let c = self.stream.read_char();
                         if c.is_none() {
@@ -280,24 +303,45 @@ impl<'a> Tokenizer<'a> {
         return (0x0000..=0x001F).contains(&num) || (0x007F..=0x009F).contains(&num);
     }
 
-    /*
-     * Find candidates in the token named entities that start with the given prefix.
-     * For instance: the prefix 'no' would return 'not', 'notin' etc..
-     *
-     * This will iterate over EACH entity, which takes time. At a later stage, we want to
-     * do this with an tree index to make it (very) fast.
-     */
-    fn find_entity_candidates(&self, prefix: &str) -> Vec<&'static str> {
-        let mut found = vec![];
+    // /*
+    //  * Find candidates in the token named entities that start with the given prefix.
+    //  * For instance: the prefix 'no' would return 'not', 'notin' etc..
+    //  *
+    //  * This will iterate over EACH entity, which takes time. At a later stage, we want to
+    //  * do this with an tree index to make it (very) fast.
+    //  */
+    // fn find_entity_candidates(&self, prefix: &str) -> Vec<&'static str> {
+    //     let mut found = vec![];
+    //
+    //     for key in TOKEN_NAMED_CHARS.keys() {
+    //         if key.starts_with(prefix) {
+    //             found.push(*key);
+    //         }
+    //     }
+    //
+    //     return found;
+    // }
 
-        for key in TOKEN_NAMED_CHARS.keys() {
-            if key.starts_with(prefix) {
-                found.push(*key);
+    // Finds the longest entity from the current position in the stream. Returns the entity
+    // replacement OR None when no entity has been found.
+    fn find_entity(&self) -> Option<&str> {
+        let s: &str = self.stream.look_ahead_slice(*LONGEST_ENTITY_LENGTH);
+        for i in (0..s.len()).rev() {
+            if TOKEN_NAMED_CHARS.contains_key(&s[0..i]) {
+                // Move forward with the number of chars matching
+                self.stream.seek(self.stream.position.offset + i);
+                return Some(TOKEN_NAMED_CHARS.get(&s[0..i]).unwrap());
             }
         }
-
-        return found;
+        None
     }
+}
+
+lazy_static! {
+    // Returns the longest entity in the TOKEN_NAMED_CHARS map (this could be a const actually)
+    static ref LONGEST_ENTITY_LENGTH: usize = {
+        TOKEN_NAMED_CHARS.keys().map(|key| key.len()).max().unwrap_or(0)
+    };
 }
 
 #[cfg(test)]
