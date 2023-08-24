@@ -879,7 +879,7 @@ impl<'a> Tokenizer<'a> {
                     let c = self.stream.read_char();
                     match c {
                         Some('-') => {
-                            self.state = State::ScriptDataDoubleEscapedDashState;
+                            self.state = State::ScriptDataDoubleEscapedDashDashState;
                             self.consume('-');
                         }
                         Some('<') => {

@@ -56,7 +56,6 @@ impl<'a> Tokenizer<'a> {
                 CcrState::NamedCharacterReferenceState => {
                     loop {
                         let c = self.stream.read_char();
-
                         if c.is_none() {
                             while tmp_buf.len() > 0 {
                                 tmp_buf.pop();
@@ -85,7 +84,6 @@ impl<'a> Tokenizer<'a> {
                                 // Found a complete match, this is the longest, so use that one
                                 if TOKEN_NAMED_CHARS.contains_key(tmp_buf.as_str()) {
                                     self.consume_string(*TOKEN_NAMED_CHARS.get(tmp_buf.as_str()).unwrap());
-                                    return
                                 }
                             }
 

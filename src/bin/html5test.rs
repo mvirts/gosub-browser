@@ -77,7 +77,7 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test)
 {
-    // if test.description != "</script> in script HTML comment" {
+    // if test.description != "Non BMP-charref in RCDATA" {
     //     return;
     // }
 
