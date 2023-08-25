@@ -43,6 +43,7 @@ pub enum State {
     AttributeValueUnquotedState,
     CharacterReferenceInAttributeValueState,
     AfterAttributeValueQuotedState,
+    AfterDoctypeSystemIdentifierState,
     SelfClosingStartState,
     BogusCommentState,
     MarkupDeclarationOpenState,

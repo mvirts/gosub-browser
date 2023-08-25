@@ -44,6 +44,52 @@ macro_rules! add_to_token_value {
     }
 }
 
+macro_rules! set_public_identifier {
+    ($self:expr, $str:expr) => {
+        match &mut $self.current_token {
+            Some(Token::DocTypeToken { pub_identifier, ..}) => {
+                *pub_identifier = Some($str);
+            }
+            _ => {},
+        }
+    }
+}
+macro_rules! add_public_identifier {
+    ($self:expr, $c:expr) => {
+        match &mut $self.current_token {
+            Some(Token::DocTypeToken { pub_identifier, ..}) => {
+                if let Some(pid) = pub_identifier {
+                    pid.push($c);
+                }
+            }
+            _ => {},
+        }
+    }
+}
+
+macro_rules! set_system_identifier {
+    ($self:expr, $str:expr) => {
+        match &mut $self.current_token {
+            Some(Token::DocTypeToken { sys_identifier, ..}) => {
+                *sys_identifier = Some($str);
+            }
+            _ => {},
+        }
+    }
+}
+macro_rules! add_system_identifier {
+    ($self:expr, $c:expr) => {
+        match &mut $self.current_token {
+            Some(Token::DocTypeToken { sys_identifier, ..}) => {
+                if let Some(sid) = sys_identifier {
+                    sid.push($c);
+                }
+            }
+            _ => {},
+        }
+    }
+}
+
 // Adds the given character to the current token's name (if applicable)
 macro_rules! add_to_token_name {
     ($self:expr, $c:expr) => {
@@ -1281,6 +1327,7 @@ impl<'a> Tokenizer<'a> {
                         // @TODO: If there is an adjusted current node and it is not an element in the HTML namespace,
                         // then switch to the CDATA section state. Otherwise, this is a cdata-in-html-content parse error.
                         // Create a comment token whose data is the "[CDATA[" string. Switch to the bogus comment state.
+                        self.parse_error(ParserError::CdataInHtmlContent);
                         self.current_token = Some(Token::CommentToken{
                             value: "[CDATA[".into(),
                         });
@@ -1580,19 +1627,407 @@ impl<'a> Tokenizer<'a> {
                         }
                     }
                 }
-                State::DocTypeNameState => {}
-                State::AfterDocTypeNameState => {}
-                State::AfterDocTypePublicKeywordState => {}
-                State::BeforeDocTypePublicIdentifierState => {}
-                State::DocTypePublicIdentifierDoubleQuotedState => {}
-                State::DocTypePublicIdentifierSingleQuotedState => {}
-                State::AfterDoctypePublicIdentifierState => {}
-                State::BetweenDocTypePublicAndSystemIdentifiersState => {}
-                State::AfterDocTypeSystemKeywordState => {}
-                State::BeforeDocTypeSystemIdentifiedState => {}
-                State::DocTypeSystemIdentifierDoubleQuotedState => {}
-                State::DocTypeSystemIdentifierSingleQuotedState => {}
-                State::AfterDocTypeSystemIdentifiedState => {}
+                State::DocTypeNameState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => self.state = State::AfterDocTypeNameState,
+                        Some('>') => {
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        Some(ch @ 'A'..='Z') => add_to_token_name!(self, to_lowercase!(ch)),
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            add_to_token_name!(self, CHAR_REPLACEMENT);
+                        },
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => add_to_token_name!(self, c.unwrap()),
+                    }
+                }
+                State::AfterDocTypeNameState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
+                            // ignore
+                        }
+                        Some('>') => {
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => {
+                            if self.stream.look_ahead_slice(6).to_uppercase() == "PUBLIC" {
+                                self.stream.seek(self.stream.position.offset + 6);
+                                self.state = State::AfterDocTypePublicKeywordState;
+                                continue;
+                            }
+                            if self.stream.look_ahead_slice(6).to_uppercase() == "SYSTEM" {
+                                self.stream.seek(self.stream.position.offset + 6);
+                                self.state = State::AfterDocTypeSystemKeywordState;
+                                continue;
+                            }
+                            self.parse_error(ParserError::InvalidCharacterSequenceAfterDoctypeName);
+                            self.set_quirks_mode(true);
+                            self.stream.unread();
+                            self.state = State::BogusDocTypeState;
+                        }
+                    }
+                }
+                State::AfterDocTypePublicKeywordState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => self.state = State::BeforeDocTypePublicIdentifierState,
+                        Some('"') => {
+                            self.parse_error(ParserError::MissingWhitespaceAfterDoctypePublicKeyword);
+                            set_public_identifier!(self, String::new());
+                            self.state = State::DocTypePublicIdentifierDoubleQuotedState;
+                        }
+                        Some('\'') => {
+                            self.parse_error(ParserError::MissingWhitespaceAfterDoctypePublicKeyword);
+                            set_public_identifier!(self, String::new());
+                            self.state = State::DocTypePublicIdentifierSingleQuotedState;
+                        }
+                        Some('>') => {
+                            self.parse_error(ParserError::MissingDoctypePublicIdentifier);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => {
+                            self.parse_error(ParserError::MissingQuoteBeforeDoctypePublicIdentifier);
+                            self.set_quirks_mode(true);
+                            self.stream.unread();
+                            self.state = State::BogusDocTypeState;
+                        }
+                    }
+                }
+                State::BeforeDocTypePublicIdentifierState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
+                            // ignore
+                        },
+                        Some('"') => {
+                            set_public_identifier!(self, String::new());
+                            self.state = State::DocTypePublicIdentifierDoubleQuotedState;
+                        }
+                        Some('\'') => {
+                            set_public_identifier!(self, String::new());
+                            self.state = State::DocTypePublicIdentifierSingleQuotedState;
+                        }
+                        Some('>') => {
+                            self.parse_error(ParserError::MissingDoctypePublicIdentifier);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => {
+                            self.parse_error(ParserError::MissingQuoteBeforeDoctypePublicIdentifier);
+                            self.set_quirks_mode(true);
+                            self.stream.unread();
+                            self.state = State::BogusDocTypeState;
+                        }
+                    }
+                }
+                State::DocTypePublicIdentifierDoubleQuotedState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('"') => self.state = State::AfterDoctypePublicIdentifierState,
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            add_public_identifier!(self, CHAR_REPLACEMENT);
+                        }
+                        Some('>') => {
+                            self.parse_error(ParserError::AbruptDoctypePublicIdentifier);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => add_public_identifier!(self, c.unwrap()),
+                    }
+                }
+                State::DocTypePublicIdentifierSingleQuotedState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('\'') => self.state = State::AfterDoctypePublicIdentifierState,
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            add_public_identifier!(self, CHAR_REPLACEMENT);
+                        }
+                        Some('>') => {
+                            self.parse_error(ParserError::AbruptDoctypePublicIdentifier);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => add_public_identifier!(self, c.unwrap()),
+                    }
+                }
+                State::AfterDoctypePublicIdentifierState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => self.state = State::BetweenDocTypePublicAndSystemIdentifiersState,
+                        Some('>') => {
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        Some('"') => {
+                            self.parse_error(ParserError::MissingWhitespaceBetweenDoctypePublicAndSystemIdentifiers);
+                            set_system_identifier!(self, String::new());
+                            self.state = State::DocTypeSystemIdentifierDoubleQuotedState;
+                        }
+                        Some('\'') => {
+                            self.parse_error(ParserError::MissingWhitespaceBetweenDoctypePublicAndSystemIdentifiers);
+                            set_system_identifier!(self, String::new());
+                            self.state = State::DocTypeSystemIdentifierSingleQuotedState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => {
+                            self.parse_error(ParserError::MissingQuoteBeforeDoctypeSystemIdentifier);
+                            self.set_quirks_mode(true);
+                            self.stream.unread();
+                            self.state = State::BogusDocTypeState;
+                        }
+                    }
+                }
+                State::BetweenDocTypePublicAndSystemIdentifiersState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
+                            // ignore
+                        },
+                        Some('>') => {
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        Some('"') => {
+                            set_system_identifier!(self, String::new());
+                            self.state = State::DocTypeSystemIdentifierDoubleQuotedState;
+                        }
+                        Some('\'') => {
+                            set_system_identifier!(self, String::new());
+                            self.state = State::DocTypeSystemIdentifierSingleQuotedState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => {
+                            self.parse_error(ParserError::MissingQuoteBeforeDoctypeSystemIdentifier);
+                            self.set_quirks_mode(true);
+                            self.stream.unread();
+                            self.state = State::BogusDocTypeState;
+                        }
+                    }
+                }
+                State::AfterDocTypeSystemKeywordState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => self.state = State::BeforeDocTypeSystemIdentifiedState,
+                        Some('"') => {
+                            self.parse_error(ParserError::MissingWhitespaceAfterDoctypeSystemKeyword);
+                            set_system_identifier!(self, String::new());
+                            self.state = State::DocTypeSystemIdentifierDoubleQuotedState;
+                        }
+                        Some('\'') => {
+                            self.parse_error(ParserError::MissingWhitespaceAfterDoctypeSystemKeyword);
+                            set_system_identifier!(self, String::new());
+                            self.state = State::DocTypeSystemIdentifierSingleQuotedState;
+                        }
+                        Some('>') => {
+                            self.parse_error(ParserError::MissingDoctypeSystemIdentifier);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => {
+                            self.parse_error(ParserError::MissingQuoteBeforeDoctypeSystemIdentifier);
+                            self.set_quirks_mode(true);
+                            self.stream.unread();
+                            self.state = State::BogusDocTypeState;
+                        }
+                    }
+                }
+                State::BeforeDocTypeSystemIdentifiedState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
+                            // ignore
+                        },
+                        Some('"') => {
+                            set_system_identifier!(self, String::new());
+                            self.state = State::DocTypeSystemIdentifierDoubleQuotedState;
+                        }
+                        Some('\'') => {
+                            set_system_identifier!(self, String::new());
+                            self.state = State::DocTypeSystemIdentifierSingleQuotedState;
+                        }
+                        Some('>') => {
+                            self.parse_error(ParserError::MissingDoctypeSystemIdentifier);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => {
+                            self.parse_error(ParserError::MissingQuoteBeforeDoctypeSystemIdentifier);
+                            self.set_quirks_mode(true);
+                            self.stream.unread();
+                            self.state = State::BogusDocTypeState;
+                        }
+                    }
+                }
+                State::DocTypeSystemIdentifierDoubleQuotedState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('"') => self.state = State::AfterDocTypeSystemIdentifiedState,
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            add_system_identifier!(self, CHAR_REPLACEMENT);
+                        }
+                        Some('>') => {
+                            self.parse_error(ParserError::AbruptDoctypeSystemIdentifier);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => add_system_identifier!(self, c.unwrap()),
+                    }
+
+                }
+                State::DocTypeSystemIdentifierSingleQuotedState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some('\'') => self.state = State::AfterDoctypeSystemIdentifierState,
+                        Some(CHAR_NUL) => {
+                            self.parse_error(ParserError::UnexpectedNullCharacter);
+                            add_system_identifier!(self, CHAR_REPLACEMENT);
+                        }
+                        Some('>') => {
+                            self.parse_error(ParserError::AbruptDoctypeSystemIdentifier);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => add_system_identifier!(self, c.unwrap()),
+                    }
+
+                }
+                State::AfterDocTypeSystemIdentifiedState => {
+                    let c = self.stream.read_char();
+                    match c {
+                        Some(CHAR_TAB) |
+                        Some(CHAR_LF) |
+                        Some(CHAR_FF) |
+                        Some(CHAR_SPACE) => {
+                            // ignore
+                        },
+                        Some('>') => {
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        None => {
+                            self.parse_error(ParserError::EofInDoctype);
+                            self.set_quirks_mode(true);
+                            emit_current_token!(self);
+                            self.state = State::DataState;
+                        }
+                        _ => {
+                            self.parse_error(ParserError::UnexpectedCharacterAfterDoctypeSystemIdentifier);
+                            self.stream.unread();
+                            self.state = State::BogusDocTypeState;
+                        }
+                    }
+
+                }
                 State::BogusDocTypeState => {
                     let c = self.stream.read_char();
                     match c {
@@ -1638,9 +2073,10 @@ impl<'a> Tokenizer<'a> {
                 State::CDataSectionEndState => {
                     let c = self.stream.read_char();
                     match c {
-                        Some(']') => self.state = State::CDataSectionEndState,
+                        Some(']') => self.consume(']'),
                         Some('>') => self.state = State::DataState,
                         _ => {
+                            self.consume(']');
                             self.consume(']');
                             self.stream.unread();
                             self.state = State::CDataSectionState;
@@ -1725,13 +2161,20 @@ impl<'a> Tokenizer<'a> {
             Token::StartTagToken { is_self_closing, .. } => {
                 *is_self_closing = is_closing;
             }
-            _ => {
-                // @TODO: this was not a start tag token
-            }
+            _ => {}
         }
-
-        self.clear_consume_buffer();
     }
+
+    // Set force_quirk mode in current token
+    fn set_quirks_mode(&mut self, quirky: bool) {
+        match &mut self.current_token.as_mut().unwrap() {
+            Token::DocTypeToken { force_quirks, .. } => {
+                *force_quirks = quirky;
+            }
+            _ => {}
+        }
+    }
+
 
     // Adds a new attribute to the current token
     fn set_add_attribute_to_current_token(&mut self, name: String, value: String) {
@@ -1741,9 +2184,7 @@ impl<'a> Tokenizer<'a> {
                     (name.clone(), value.clone())
                 );
             }
-            _ => {
-                // @TODO: this was not a start tag token
-            }
+            _ => {}
         }
 
         self.current_attr_name.clear()

@@ -172,9 +172,29 @@ fn match_token(have: Token, expected: &Vec<Value>, double_escaped: bool) -> bool
     }
 
     match have {
-        Token::DocTypeToken{..} => {
-            println!("❌ Incorrect doctype (not implemented in testsuite)");
-            return false;
+        Token::DocTypeToken{name, force_quirks, pub_identifier, sys_identifier} => {
+            let expected_name = expected.get(1).unwrap().as_str().unwrap();
+            let expected_quirk = expected.get(2).unwrap().as_bool();
+            let expected_pub = expected.get(3).unwrap().as_str();
+            let expected_sys = expected.get(4).unwrap().as_str();
+
+            if expected_name != name {
+                println!("❌ Incorrect doctype (wanted name: '{}', got: '{}'", expected_name, name);
+                return false;
+            }
+            if expected_quirk.is_some() && expected_quirk.unwrap() != force_quirks {
+                println!("❌ Incorrect doctype (wanted quirk: '{}'", expected_quirk.unwrap());
+                return false;
+            }
+            if expected_pub != pub_identifier.as_deref() {
+                println!("❌ Incorrect doctype (wanted pub id: '{:?}', got '{:?}'", expected_pub, pub_identifier);
+                return false;
+            }
+            if expected_sys != sys_identifier.as_deref() {
+                println!("❌ Incorrect doctype (wanted sys id: '{:?}', got '{:?}'", expected_sys, sys_identifier);
+                return false;
+            }
+
         }
         Token::StartTagToken{name, attributes, ..} => {
             let output = expected.get(1).unwrap().as_str().unwrap();
