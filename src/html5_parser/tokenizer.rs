@@ -32,6 +32,7 @@ pub struct Options {
     pub last_start_tag: String,         // Sets the last starting tag in the tokenizer. Normally only needed when dealing with tests
 }
 
+// Adds the given character to the current token's value (if applicable)
 macro_rules! add_to_token_value {
     ($self:expr, $c:expr) => {
         match &mut $self.current_token {
@@ -43,6 +44,7 @@ macro_rules! add_to_token_value {
     }
 }
 
+// Adds the given character to the current token's name (if applicable)
 macro_rules! add_to_token_name {
     ($self:expr, $c:expr) => {
         match &mut $self.current_token {
@@ -60,6 +62,7 @@ macro_rules! add_to_token_name {
     }
 }
 
+// Convert a character to lower case value (assumes character is in A-Z range)
 macro_rules! to_lowercase {
     // Converts A-Z to a-z
     ($c:expr) => {
@@ -67,6 +70,7 @@ macro_rules! to_lowercase {
     };
 }
 
+// Emits the current stored token
 macro_rules! emit_current_token {
     ($self:expr) => {
         match $self.current_token {
@@ -79,6 +83,7 @@ macro_rules! emit_current_token {
     };
 }
 
+// Emits the given stored token. It does not have to be stored first.
 macro_rules! emit_token {
     ($self:expr, $token:expr) => {
         // Save the start token name if we are pushing it. This helps us in detecting matching tags.
@@ -101,6 +106,7 @@ macro_rules! emit_token {
     }
 }
 
+// Parser error that defines an error (message) on the given position
 #[derive(PartialEq)]
 pub struct ParseError {
     pub message: String,  // Parse message
@@ -1662,6 +1668,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    // Return true when the given end_token matches the stored start token (ie: 'table' matches when last_start_token = 'table')
     fn is_appropriate_end_token(&self, end_token: &Vec<char>) -> bool {
         let s: String = end_token.iter().collect();
         self.last_start_token == s
@@ -1682,6 +1689,7 @@ impl<'a> Tokenizer<'a> {
         self.consumed.clear()
     }
 
+    // Return the list of current parse errors
     pub fn get_errors(&self) -> &Vec<ParseError> {
         &self.errors
     }
@@ -1753,45 +1761,6 @@ impl<'a> Tokenizer<'a> {
             _ => panic!("trying to set the name of a non start/end tag token")
         }
     }
-
-    // // Pushes a token to the stack
-    // fn push_token_to_queue(&mut self, token: &Token) {
-    //
-    //     // Save the start token name if we are pushing it. This helps us in detecting matching tags.
-    //     match token {
-    //         Token::StartTagToken { name, .. } => {
-    //             self.last_start_token = String::from(name);
-    //         },
-    //         _ => {}
-    //     }
-    //
-    //     self.token_queue.push(token.clone());
-    // }
-
-    // // Pushes the current configured token onto the token stack, and clears the current token
-    // fn push_current_token_to_queue(&mut self) {
-    //     // If we are pushing a start token, remember the name for later end-tag matching use
-    //     if self.current_token.is_some() {
-    //         match self.current_token.clone().unwrap() {
-    //             Token::StartTagToken { name, .. } => {
-    //                 self.last_start_token = name;
-    //             },
-    //             _ => {}
-    //         }
-    //     }
-    //
-    //     // If there is any consumed data, emit this first as a text token
-    //     if self.has_consumed_data() {
-    //         self.push_token_to_queue(&Token::TextToken{
-    //             value: self.get_consumed_str(),
-    //         });
-    //         self.clear_consume_buffer();
-    //     }
-    //
-    //     // We are cloning the current token before we send it to the token_queue. This might be inefficient.
-    //     self.token_queue.push(self.current_token.clone().unwrap());
-    //     self.current_token = None;
-    // }
 
     // This function checks to see if there is already an attribute name like the one in current_attr_name.
     fn check_if_attr_already_exists(&mut self) {
