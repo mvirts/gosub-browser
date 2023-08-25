@@ -176,7 +176,7 @@ fn match_token(have: Token, expected: &Vec<Value>, double_escaped: bool) -> bool
             println!("❌ Incorrect doctype (not implemented in testsuite)");
             return false;
         }
-        Token::StartTagToken{name, is_self_closing, attributes} => {
+        Token::StartTagToken{name, attributes, ..} => {
             let output = expected.get(1).unwrap().as_str().unwrap();
             // check name
             if name.ne(&output) {

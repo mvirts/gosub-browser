@@ -1505,7 +1505,7 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::DataState;
                         }
                         _ => {
-                            self.parse_error(ParserError::MissingWhitespaceBeforeDoctypeName)
+                            self.parse_error(ParserError::MissingWhitespaceBeforeDoctypeName);
                             self.stream.unread();
                             self.state = State::BeforeDocTypeNameState;
                         }
@@ -1545,7 +1545,7 @@ impl<'a> Tokenizer<'a> {
                         },
                         Some('>') => {
                             self.parse_error(ParserError::MissingDoctypeName);
-                            emit_token!(Token::DocTypeToken{
+                            emit_token!(self, Token::DocTypeToken{
                                 name: "".to_string(),
                                 force_quirks: true,
                                 pub_identifier: None,
@@ -1573,7 +1573,7 @@ impl<'a> Tokenizer<'a> {
                                 force_quirks: false,
                                 pub_identifier: None,
                                 sys_identifier: None,
-                            }));
+                            });
 
                             add_to_token_name!(self, c.unwrap());
                             self.state = State::DocTypeNameState;
@@ -1768,13 +1768,8 @@ impl<'a> Tokenizer<'a> {
 
         match &mut self.current_token {
             Some(Token::StartTagToken { attributes, .. }) => {
-                for (name, ..) in attributes {
-                    if name.clone() == self.current_attr_name {
-                        self.ignore_attribute = true;
-                        return;
-                    }
-                }
-            }
+                self.ignore_attribute = attributes.iter().any(|(name, ..)| name == &self.current_attr_name);
+            },
             _ => {}
         }
     }
