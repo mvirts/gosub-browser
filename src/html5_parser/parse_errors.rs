@@ -1,6 +1,7 @@
 pub enum ParserError {
     AbruptDoctypePublicIdentifier,
     AbruptDoctypeSystemIdentifier,
+    AbruptClosingOfEmptyComment,
     AbsenceOfDigitsInNumericCharacterReference,
     CdataInHtmlContent,
     CharacterReferenceOutsideUnicodeRange,
@@ -100,6 +101,7 @@ impl ParserError {
             ParserError::UnexpectedQuestionMarkInsteadOfTagName => "unexpected-question-mark-instead-of-tag-name",
             ParserError::UnexpectedSolidusInTag => "unexpected-solidus-in-tag",
             ParserError::UnknownNamedCharacterReference => "unknown-named-character-reference",
+            ParserError::AbruptClosingOfEmptyComment => "abrupt-closing-of-empty-comment",
         }
     }
 }

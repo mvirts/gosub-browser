@@ -71,28 +71,28 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 CcrState::NamedCharacterReferenceState => {
-                    let entity_chars: Option<Vec<char>> = self.find_entity().map(|entity| entity.chars().collect());
-
-                    if let Some(chars) = entity_chars {
-                        if chars.last().unwrap_or(&'\0') != &';' {
+                    if let Some(entity) = self.find_entity() {
+                        if entity.chars().last().unwrap() != ';' {
                             self.parse_error(ParserError::MissingSemicolonAfterCharacterReference);
                         }
 
+                        let entity_chars = *TOKEN_NAMED_CHARS.get(entity.as_str()).unwrap();
+
                         // Flush codepoints consumed as character reference
-                        for c in chars {
+                        for c in entity_chars.chars() {
                             if as_attribute {
                                 self.current_attr_value.push(c);
                             } else {
                                 self.consume(c);
                             }
                         }
-                        self.temporary_buffer.clear();
 
+                        self.temporary_buffer.clear();
                         return;
-                    } else {
-                        consume_temp_buffer!(self, as_attribute);
-                        ccr_state = CcrState::AmbiguousAmpersandState;
                     }
+
+                    consume_temp_buffer!(self, as_attribute);
+                    ccr_state = CcrState::AmbiguousAmpersandState;
                 }
                 CcrState::AmbiguousAmpersandState => {
                     let c = self.stream.read_char();
@@ -276,13 +276,13 @@ impl<'a> Tokenizer<'a> {
 
     // Finds the longest entity from the current position in the stream. Returns the entity
     // replacement OR None when no entity has been found.
-    fn find_entity(&mut self) -> Option<&str> {
+    fn find_entity(&mut self) -> Option<String> {
         let s= self.stream.look_ahead_slice(*LONGEST_ENTITY_LENGTH);
         for i in (0..=s.len()).rev() {
             if TOKEN_NAMED_CHARS.contains_key(&s[0..i]) {
                 // Move forward with the number of chars matching
                 self.stream.seek(self.stream.position.offset + i as i64);
-                return Some(TOKEN_NAMED_CHARS.get(&s[0..i]).unwrap());
+                return Some(String::from(&s[0..i]));
             }
         }
         None

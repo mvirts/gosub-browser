@@ -62,14 +62,11 @@ fn main () -> io::Result<()> {
         }
         let container: Root = container.unwrap();
 
-        println!("***");
         println!("*** Running {} tests from 🗄️ {:?}", container.tests.len(), path);
-        println!("***");
 
         for test in container.tests {
             run_token_test(&test)
         }
-        println!("");
     }
 
     Ok(())
@@ -77,9 +74,9 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test)
 {
-    if test.description != "Non BMP-charref in attribute" {
-        return;
-    }
+    // if test.description != "Non BMP-charref in attribute" {
+    //     return;
+    // }
 
     println!("🧪 running test: {}", test.description);
 
