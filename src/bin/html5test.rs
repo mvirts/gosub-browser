@@ -1,5 +1,4 @@
 use std::{env, fs, io};
-use std::process::exit;
 use serde_json;
 use serde_json::Value;
 use gosub_engine::html5_parser::input_stream::InputStream;
@@ -18,6 +17,7 @@ extern crate serde_derive;
 pub struct Root {
     pub tests: Vec<Test>,
 }
+
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,11 +42,22 @@ pub struct Error {
     pub col: i64,
 }
 
+pub struct TestResults{
+    succeeded: usize,
+    failed: usize,
+    tests: usize,
+}
 
 fn main () -> io::Result<()> {
     let default_dir = "./html5lib-tests";
     let dir = env::args().nth(1).unwrap_or(default_dir.to_string());
 
+    let mut results = TestResults{
+        succeeded: 0,
+        failed: 0,
+        tests: 0,
+    };
+    
     for entry in fs::read_dir(dir + "/tokenizer")? {
         let entry = entry?;
         let path = entry.path();
@@ -62,24 +73,27 @@ fn main () -> io::Result<()> {
         }
         let container: Root = container.unwrap();
 
-        println!("*** Running {} tests from 🗄️ {:?}", container.tests.len(), path);
+        println!("🏃‍♂️ Running {} tests from 🗄️ {:?}", container.tests.len(), path);
 
         for test in container.tests {
-            run_token_test(&test)
+            run_token_test(&test, &mut results)
         }
     }
 
+
+    println!("🏁 Tests completed: Ran {} tests, {} succeeded, {} failed", results.tests, results.succeeded, results.failed);
     Ok(())
 }
 
-fn run_token_test(test: &Test)
+fn run_token_test(test: &Test, results: &mut TestResults)
 {
-    // if test.description != "Non BMP-charref in attribute" {
+    // if ! test.description.starts_with("Windows-1252 EURO SIGN numeric entity.") {
     //     return;
     // }
 
     println!("🧪 running test: {}", test.description);
 
+    results.tests += 1;
 
     // If no initial state is given, assume Data state
     let mut states = test.initial_states.clone();
@@ -117,14 +131,18 @@ fn run_token_test(test: &Test)
         for expected_token in test.output.iter() {
             let t = tknzr.next_token();
             if ! match_token(t, expected_token, test.double_escaped.unwrap_or(false)) {
-                exit(1);
+                results.failed += 1;
+                continue;
             }
 
             if test.errors.len() > 0 {
                 if ! match_errors(&tknzr, &test.errors) {
-                    exit(1);
+                    results.failed += 1;
+                    continue;
                 }
             }
+
+            results.succeeded += 1;
         }
     }
 
@@ -173,13 +191,17 @@ fn match_token(have: Token, expected: &Vec<Value>, double_escaped: bool) -> bool
 
     match have {
         Token::DocTypeToken{name, force_quirks, pub_identifier, sys_identifier} => {
-            let expected_name = expected.get(1).unwrap().as_str().unwrap();
+            let expected_name = expected.get(1).unwrap().as_str();
             let expected_quirk = expected.get(2).unwrap().as_bool();
             let expected_pub = expected.get(3).unwrap().as_str();
             let expected_sys = expected.get(4).unwrap().as_str();
 
-            if expected_name != name {
-                println!("❌ Incorrect doctype (wanted name: '{}', got: '{}'", expected_name, name);
+            if expected_name.is_none() && ! name.is_empty() {
+                println!("❌ Incorrect doctype (no name expected)");
+                return false;
+            }
+            if expected_name.is_some() && expected_name.unwrap() != name {
+                println!("❌ Incorrect doctype (wanted name: '{}', got: '{}'", expected_name.unwrap(), name);
                 return false;
             }
             if expected_quirk.is_some() && expected_quirk.unwrap() != force_quirks {
@@ -204,6 +226,7 @@ fn match_token(have: Token, expected: &Vec<Value>, double_escaped: bool) -> bool
                 return false;
             }
 
+            // @TODO: check attributes!
             if attributes.len() == 0 {
                 println!("ok");
             }
@@ -261,6 +284,10 @@ fn escape(input: &str) -> String {
     let re = Regex::new(r"\\u([0-9a-fA-F]{4})").unwrap();
     re.replace_all(input, |caps: &regex::Captures| {
         let hex_val = u32::from_str_radix(&caps[1], 16).unwrap();
+        // special case for converting surrogate codepoints to char (protip: you can't)
+        if hex_val >= 0xD800 && hex_val <= 0xDFFF {
+            return caps[1].to_string();
+        }
         char::from_u32(hex_val).unwrap().to_string()
     }).into_owned()
 }

@@ -40,7 +40,7 @@ impl<'a> Tokenizer<'a> {
     pub fn consume_character_reference(&mut self, _additional_allowed_char: Option<char>, as_attribute: bool)
     {
         let mut ccr_state = CcrState::CharacterReferenceState;
-        let mut char_ref_code: u32 = 0;
+        let mut char_ref_code: Option<u32> = Some(0);
 
         loop {
             match ccr_state {
@@ -51,7 +51,6 @@ impl<'a> Tokenizer<'a> {
                     match c {
                         None => {
                             consume_temp_buffer!(self, as_attribute);
-
                             return
                         },
                         Some('A'..='Z') | Some('a'..='z') | Some('0'..='9') => {
@@ -72,11 +71,11 @@ impl<'a> Tokenizer<'a> {
                 },
                 CcrState::NamedCharacterReferenceState => {
                     if let Some(entity) = self.find_entity() {
+                        let entity_chars = *TOKEN_NAMED_CHARS.get(entity.as_str()).unwrap();
+
                         if entity.chars().last().unwrap() != ';' {
                             self.parse_error(ParserError::MissingSemicolonAfterCharacterReference);
                         }
-
-                        let entity_chars = *TOKEN_NAMED_CHARS.get(entity.as_str()).unwrap();
 
                         // Flush codepoints consumed as character reference
                         for c in entity_chars.chars() {
@@ -117,11 +116,11 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 CcrState::NumericCharacterReferenceState => {
-                    char_ref_code = 0;
+                    char_ref_code = Some(0);
 
                     let c = self.stream.read_char();
                     match c {
-                        None => return,
+                        None => ccr_state = CcrState::NumericalCharacterReferenceEndState,
                         Some('X') | Some('x') => {
                             self.temporary_buffer.push(c.unwrap());
                             ccr_state = CcrState::HexadecimalCharacterReferenceStartState;
@@ -135,7 +134,7 @@ impl<'a> Tokenizer<'a> {
                 CcrState::HexadecimalCharacterReferenceStartState => {
                     let c = self.stream.read_char();
                     match c {
-                        None => return,
+                        None => ccr_state = CcrState::NumericalCharacterReferenceEndState,
                         Some('0'..='9') | Some('A'..='Z') | Some('a'..='z') => {
                             self.stream.unread();
                             ccr_state = CcrState::HexadecimalCharacterReferenceState
@@ -152,7 +151,7 @@ impl<'a> Tokenizer<'a> {
                 CcrState::DecimalCharacterReferenceStartState => {
                     let c = self.stream.read_char();
                     match c {
-                        None => return,
+                        None => ccr_state = CcrState::NumericalCharacterReferenceEndState,
                         Some('0'..='9') => {
                             self.stream.unread();
                             ccr_state = CcrState::DecimalCharacterReferenceState;
@@ -169,25 +168,36 @@ impl<'a> Tokenizer<'a> {
                 CcrState::HexadecimalCharacterReferenceState => {
                     let c = self.stream.read_char();
                     match c {
-                        None => return,
+                        None => ccr_state = CcrState::NumericalCharacterReferenceEndState,
                         Some('0'..='9') => {
-                            char_ref_code *= 16;
-                            char_ref_code += c.unwrap() as u32 - 0x30;
+                            let i = c.unwrap() as u32 - 0x30;
+                            if let Some(value) = char_ref_code {
+                                char_ref_code = value
+                                    .checked_mul(16)
+                                    .and_then(|mul_result| mul_result.checked_add(i));
+                            }
                         }
                         Some('A'..='F') => {
-                            char_ref_code *= 16;
-                            char_ref_code += c.unwrap() as u32 - 0x37;
+                            let i = c.unwrap() as u32 - 0x37;
+                            if let Some(value) = char_ref_code {
+                                char_ref_code = value
+                                    .checked_mul(16)
+                                    .and_then(|mul_result| mul_result.checked_add(i));
+                            }
                         }
                         Some('a'..='f') => {
-                            char_ref_code *= 16;
-                            char_ref_code += c.unwrap() as u32 - 0x57;
+                            let i = c.unwrap() as u32 - 0x57;
+                            if let Some(value) = char_ref_code {
+                                char_ref_code = value
+                                    .checked_mul(16)
+                                    .and_then(|mul_result| mul_result.checked_add(i));
+                            }
                         }
                         Some(';') => {
                             ccr_state = CcrState::NumericalCharacterReferenceEndState;
                         }
                         _ => {
                             self.parse_error(ParserError::MissingSemicolonAfterCharacterReference);
-
                             self.stream.unread();
                             ccr_state = CcrState::NumericalCharacterReferenceEndState;
                         }
@@ -196,23 +206,28 @@ impl<'a> Tokenizer<'a> {
                 CcrState::DecimalCharacterReferenceState => {
                     let c = self.stream.read_char();
                     match c {
-                        None => return,
+                        None => ccr_state = CcrState::NumericalCharacterReferenceEndState,
                         Some('0'..='9') => {
-                            char_ref_code *= 10;
-                            char_ref_code += c.unwrap() as u32 - 0x30;
+                            let i = c.unwrap() as u32 - 0x30;
+                            if let Some(value) = char_ref_code {
+                                char_ref_code = value
+                                    .checked_mul(10)
+                                    .and_then(|mul_result| mul_result.checked_add(i));
+                            }
                         }
                         Some(';') => {
                             ccr_state = CcrState::NumericalCharacterReferenceEndState;
                         }
                         _ => {
                             self.parse_error(ParserError::MissingSemicolonAfterCharacterReference);
-
                             self.stream.unread();
                             ccr_state = CcrState::NumericalCharacterReferenceEndState;
                         }
                     }
                 }
                 CcrState::NumericalCharacterReferenceEndState => {
+                    let mut char_ref_code = char_ref_code.unwrap_or(0);
+
                     if char_ref_code == 0 {
                         self.parse_error(ParserError::NullCharacterReference);
                         char_ref_code = CHAR_REPLACEMENT as u32;
@@ -231,13 +246,13 @@ impl<'a> Tokenizer<'a> {
                         self.parse_error(ParserError::NoncharacterCharacterReference);
                         char_ref_code = CHAR_REPLACEMENT as u32;
                     }
-                    if self.is_control_char(char_ref_code) {
+                    if self.is_control_char(char_ref_code) || char_ref_code == 0x0D {
                         self.parse_error(ParserError::ControlCharacterReference);
-                        char_ref_code = CHAR_REPLACEMENT as u32;
-                    }
+                        // char_ref_code = CHAR_REPLACEMENT as u32;
 
-                    if TOKEN_REPLACEMENTS.contains_key(&char_ref_code) {
-                        char_ref_code = *TOKEN_REPLACEMENTS.get(&char_ref_code).unwrap() as u32;
+                        if TOKEN_REPLACEMENTS.contains_key(&char_ref_code) {
+                            char_ref_code = *TOKEN_REPLACEMENTS.get(&char_ref_code).unwrap() as u32;
+                        }
                     }
 
                     self.temporary_buffer = vec![char::from_u32(char_ref_code).unwrap_or(CHAR_REPLACEMENT)];
@@ -359,64 +374,64 @@ mod tests {
 
 
         // ChatGPT generated tests
-        // entity_200: ("&copy;", "©")
-        // entity_201: ("&copy ", "© ")
-        // entity_202: ("&#169;", "©")
-        // entity_203: ("&#xA9;", "©")
-        // entity_204: ("&lt;", "<")
-        // entity_205: ("&unknown;", "&unknown;")
-        // entity_206: ("&#60;", "<")
-        // entity_207: ("&#x3C;", "<")
-        // entity_208: ("&amp;", "&")
-        // entity_209: ("&euro;", "€")
-        // entity_210: ("&gt;", ">")
-        // entity_211: ("&reg;", "®")
-        // entity_212: ("&#174;", "®")
-        // entity_213: ("&#xAE;", "®")
-        // entity_214: ("&quot;", "\"")
-        // entity_215: ("&#34;", "\"")
-        // entity_216: ("&#x22;", "\"")
-        // entity_217: ("&apos;", "'")
-        // entity_218: ("&#39;", "'")
-        // entity_219: ("&#x27;", "'")
-        // entity_220: ("&excl;", "!")
-        // entity_221: ("&#33;", "!")
-        // entity_222: ("&num;", "#")
-        // entity_223: ("&#35;", "#")
-        // entity_224: ("&dollar;", "$")
-        // entity_225: ("&#36;", "$")
-        // entity_226: ("&percnt;", "%")
-        // entity_227: ("&#37;", "%")
-        // entity_228: ("&ast;", "*")
-        // entity_229: ("&#42;", "*")
-        // entity_230: ("&plus;", "+")
-        // entity_231: ("&#43;", "+")
-        // entity_232: ("&comma;", ",")
-        // entity_233: ("&#44;", ",")
-        // entity_234: ("&minus;", "−")
-        // entity_235: ("&#45;", "-")
-        // entity_236: ("&period;", ".")
-        // entity_237: ("&#46;", ".")
-        // entity_238: ("&sol;", "/")
-        // entity_239: ("&#47;", "/")
-        // entity_240: ("&colon;", ":")
-        // entity_241: ("&#58;", ":")
-        // entity_242: ("&semi;", ";")
-        // entity_243: ("&#59;", ";")
-        // entity_244: ("&equals;", "=")
-        // entity_245: ("&#61;", "=")
-        // entity_246: ("&quest;", "?")
-        // entity_247: ("&#63;", "?")
-        // entity_248: ("&commat;", "@")
-        // entity_249: ("&#64;", "@")
-        // entity_250: ("&COPY;", "©")
-        // entity_251: ("&#128;", "€")
-        // entity_252: ("&#x9F;", "Ÿ")
-        // entity_253: ("&#31;", "")
-        // entity_254: ("&#0;", "�")
-        // entity_255: ("&#xD800;", "�")
-        // entity_256: ("&unknownchar;", "&unknownchar;")
-        // entity_257: ("&#9999999;", "�")
-        // entity_259: ("&#11;", "")
+        entity_200: ("&copy;", "©")
+        entity_201: ("&copy ", "© ")
+        entity_202: ("&#169;", "©")
+        entity_203: ("&#xA9;", "©")
+        entity_204: ("&lt;", "<")
+        entity_205: ("&unknown;", "&unknown;")
+        entity_206: ("&#60;", "<")
+        entity_207: ("&#x3C;", "<")
+        entity_208: ("&amp;", "&")
+        entity_209: ("&euro;", "€")
+        entity_210: ("&gt;", ">")
+        entity_211: ("&reg;", "®")
+        entity_212: ("&#174;", "®")
+        entity_213: ("&#xAE;", "®")
+        entity_214: ("&quot;", "\"")
+        entity_215: ("&#34;", "\"")
+        entity_216: ("&#x22;", "\"")
+        entity_217: ("&apos;", "'")
+        entity_218: ("&#39;", "'")
+        entity_219: ("&#x27;", "'")
+        entity_220: ("&excl;", "!")
+        entity_221: ("&#33;", "!")
+        entity_222: ("&num;", "#")
+        entity_223: ("&#35;", "#")
+        entity_224: ("&dollar;", "$")
+        entity_225: ("&#36;", "$")
+        entity_226: ("&percnt;", "%")
+        entity_227: ("&#37;", "%")
+        entity_228: ("&ast;", "*")
+        entity_229: ("&#42;", "*")
+        entity_230: ("&plus;", "+")
+        entity_231: ("&#43;", "+")
+        entity_232: ("&comma;", ",")
+        entity_233: ("&#44;", ",")
+        entity_234: ("&minus;", "−")
+        entity_235: ("&#45;", "-")
+        entity_236: ("&period;", ".")
+        entity_237: ("&#46;", ".")
+        entity_238: ("&sol;", "/")
+        entity_239: ("&#47;", "/")
+        entity_240: ("&colon;", ":")
+        entity_241: ("&#58;", ":")
+        entity_242: ("&semi;", ";")
+        entity_243: ("&#59;", ";")
+        entity_244: ("&equals;", "=")
+        entity_245: ("&#61;", "=")
+        entity_246: ("&quest;", "?")
+        entity_247: ("&#63;", "?")
+        entity_248: ("&commat;", "@")
+        entity_249: ("&#64;", "@")
+        entity_250: ("&COPY;", "©")
+        entity_251: ("&#128;", "€")
+        entity_252: ("&#x9F;", "Ÿ")
+        entity_253: ("&#31;", "")
+        entity_254: ("&#0;", "�")
+        entity_255: ("&#xD800;", "�")
+        entity_256: ("&unknownchar;", "&unknownchar;")
+        entity_257: ("&#9999999;", "�")
+        entity_259: ("&#11;", "")
     }
 }

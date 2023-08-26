@@ -341,6 +341,7 @@ impl<'a> Tokenizer<'a> {
                         None => {
                             self.parse_error(ParserError::EofBeforeTagName);
                             self.consume('<');
+                            self.state = State::DataState;
                         },
                         _ => {
                             self.parse_error(ParserError::InvalidFirstCharacterOfTagName);
@@ -2134,17 +2135,20 @@ impl<'a> Tokenizer<'a> {
     pub(crate) fn parse_error(&mut self, error: ParserError) {
         // Hack: when encountering eof, we need to have the previous position, not the current one.
         let mut pos = self.stream.get_position(self.stream.position.offset - 1);
-        match error {
-            ParserError::EofBeforeTagName |
-            ParserError::EofInCdata |
-            ParserError::EofInComment |
-            ParserError::EofInDoctype |
-            ParserError::EofInScriptHtmlCommentLikeText |
-            ParserError::EofInTag => {
-                pos = self.stream.get_position(self.stream.position.offset);
-            }
-            _ => {}
+        if self.stream.eof() {
+            pos = self.stream.get_position(self.stream.position.offset);
         }
+        // match error {
+        //     ParserError::EofBeforeTagName |
+        //     ParserError::EofInCdata |
+        //     ParserError::EofInComment |
+        //     ParserError::EofInDoctype |
+        //     ParserError::EofInScriptHtmlCommentLikeText |
+        //     ParserError::EofInTag => {
+        //         pos = self.stream.get_position(self.stream.position.offset);
+        //     }
+        //     _ => {}
+        // }
 
         // Add to parse log
         self.errors.push(ParseError{
