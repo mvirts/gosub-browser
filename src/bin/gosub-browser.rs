@@ -1,8 +1,5 @@
 use std::fs::File;
 
-#[allow(dead_code)]
-pub mod gosub_engine::html5_parser;
-
 use gosub_engine::html5_parser::input_stream::Confidence;
 use gosub_engine::html5_parser::input_stream::{Encoding, InputStream};
 use gosub_engine::html5_parser::parser::Html5Parser;
