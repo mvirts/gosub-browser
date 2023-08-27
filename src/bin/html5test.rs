@@ -1,5 +1,5 @@
 use std::{env, fs, io};
-use serde_json;
+
 use serde_json::Value;
 use gosub_engine::html5_parser::input_stream::InputStream;
 use gosub_engine::html5_parser::token_states::{State as TokenState};
@@ -97,7 +97,7 @@ fn run_token_test(test: &Test, results: &mut TestResults)
 
     // If no initial state is given, assume Data state
     let mut states = test.initial_states.clone();
-    if states.len() == 0 {
+    if states.is_empty() {
         states.push(String::from("Data state"));
     }
 
@@ -135,11 +135,9 @@ fn run_token_test(test: &Test, results: &mut TestResults)
                 continue;
             }
 
-            if test.errors.len() > 0 {
-                if ! match_errors(&tknzr, &test.errors) {
-                    results.failed += 1;
-                    continue;
-                }
+            if !test.errors.is_empty() && ! match_errors(&tknzr, &test.errors) {
+                results.failed += 1;
+                continue;
             }
 
             results.succeeded += 1;
@@ -154,7 +152,7 @@ fn match_errors(tknzr: &Tokenizer, errors: &Vec<Error>) -> bool {
         let mut found = false;
 
         for got_err in tknzr.get_errors() {
-            if got_err.message == want_err.code && got_err.line as i64 == want_err.line && got_err.col as i64 == want_err.col {
+            if got_err.message == want_err.code && got_err.line == want_err.line && got_err.col == want_err.col {
                 found = true;
                 println!("✅ found parse error '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
                 break;
@@ -169,10 +167,10 @@ fn match_errors(tknzr: &Tokenizer, errors: &Vec<Error>) -> bool {
         }
     }
 
-    return true;
+    true
 }
 
-fn match_token(have: Token, expected: &Vec<Value>, double_escaped: bool) -> bool {
+fn match_token(have: Token, expected: &[Value], double_escaped: bool) -> bool {
     let tp = expected.get(0).unwrap();
 
     let expected_token_type = match tp.as_str().unwrap() {
@@ -227,7 +225,7 @@ fn match_token(have: Token, expected: &Vec<Value>, double_escaped: bool) -> bool
             }
 
             // @TODO: check attributes!
-            if attributes.len() == 0 {
+            if attributes.is_empty() {
                 println!("ok");
             }
 
@@ -277,7 +275,7 @@ fn match_token(have: Token, expected: &Vec<Value>, double_escaped: bool) -> bool
     }
 
     println!("✅ Test passed");
-    return true;
+    true
 }
 
 fn escape(input: &str) -> String {
@@ -285,7 +283,7 @@ fn escape(input: &str) -> String {
     re.replace_all(input, |caps: &regex::Captures| {
         let hex_val = u32::from_str_radix(&caps[1], 16).unwrap();
         // special case for converting surrogate codepoints to char (protip: you can't)
-        if hex_val >= 0xD800 && hex_val <= 0xDFFF {
+        if (0xD800..=0xDFFF).contains(&hex_val) {
             return caps[1].to_string();
         }
         char::from_u32(hex_val).unwrap().to_string()
