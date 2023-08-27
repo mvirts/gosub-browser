@@ -32,6 +32,18 @@ pub struct Options {
     pub last_start_tag: String,         // Sets the last starting tag in the tokenizer. Normally only needed when dealing with tests
 }
 
+macro_rules! read_char {
+    ($self:expr) => {
+        {
+            let c = $self.stream.read_char();
+            if c.is_some() && $self.is_surrogate(c.unwrap() as u32) {
+                $self.parse_error(ParserError::SurrogateInInputStream);
+            }
+            c
+        }
+    }
+}
+
 // Adds the given character to the current token's value (if applicable)
 macro_rules! add_to_token_value {
     ($self:expr, $c:expr) => {
@@ -101,7 +113,11 @@ macro_rules! add_to_token_name {
                 name.push($c);
             }
             Some(Token::DocTypeToken {name, ..}) => {
-                name.push($c);
+                // Doctype can have an optional name
+                match name {
+                    Some(ref mut string) => string.push($c),
+                    None => *name = Some($c.to_string()),
+                }
             }
             _ => {},
         }
@@ -200,7 +216,7 @@ impl<'a> Tokenizer<'a> {
 
             match self.state {
                 State::DataState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('&') => self.state = State::CharacterReferenceInDataState,
                         Some('<') => self.state = State::TagOpenState,
@@ -226,7 +242,7 @@ impl<'a> Tokenizer<'a> {
                     self.state = State::DataState;
                 }
                 State::RcDataState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('&') => {
                             self.state = State::CharacterReferenceInRcDataState
@@ -252,7 +268,7 @@ impl<'a> Tokenizer<'a> {
                     self.state = State::RcDataState;
                 }
                 State::RawTextState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('<') => self.state = State::RawTextLessThanSignState,
                         Some(CHAR_NUL) => {
@@ -271,7 +287,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('<') => self.state = State::ScriptDataLessThenSignState,
                         Some(CHAR_NUL) => {
@@ -289,7 +305,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::PlaintextState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_NUL) => {
                             self.consume(CHAR_REPLACEMENT);
@@ -306,7 +322,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::TagOpenState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('!') => self.state = State::MarkupDeclarationOpenState,
                         Some('/') => self.state = State::EndTagOpenState,
@@ -352,7 +368,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::EndTagOpenState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::EndTagToken{
@@ -387,7 +403,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::TagNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -410,7 +426,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RcDataLessThanSignState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('/') => {
                             self.temporary_buffer = vec![];
@@ -424,7 +440,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RcDataEndTagOpenState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::EndTagToken{
@@ -449,7 +465,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RcDataEndTagNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
 
                     // we use this flag because a lot of matches will actually do the same thing
                     let mut consume_anything_else = false;
@@ -508,7 +524,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RawTextLessThanSignState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('/') => {
                             self.temporary_buffer = vec![];
@@ -522,7 +538,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RawTextEndTagOpenState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::EndTagToken{
@@ -549,7 +565,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::RawTextEndTagNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
 
                     // we use this flag because a lot of matches will actually do the same thing
                     let mut consume_anything_else = false;
@@ -609,7 +625,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataLessThenSignState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('/') => {
                             self.temporary_buffer = vec![];
@@ -628,7 +644,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataEndTagOpenState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     if c.is_none() {
                         self.consume('<');
                         self.consume('/');
@@ -652,7 +668,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataEndTagNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
 
                     // we use this flag because a lot of matches will actually do the same thing
                     let mut consume_anything_else = false;
@@ -711,7 +727,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataEscapeStartState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.consume('-');
@@ -724,7 +740,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataEscapeStartDashState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.consume('-');
@@ -737,7 +753,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataEscapedState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.consume('-');
@@ -760,7 +776,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataEscapedDashState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.consume('-');
@@ -785,7 +801,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataEscapedDashDashState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.consume('-');
@@ -813,7 +829,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataEscapedLessThanSignState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('/') => {
                             self.temporary_buffer = vec![];
@@ -835,7 +851,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataEscapedEndTagOpenState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
 
                     if c.is_some() && c.unwrap().is_ascii_alphabetic() {
                         self.current_token = Some(Token::EndTagToken{
@@ -854,7 +870,7 @@ impl<'a> Tokenizer<'a> {
                     self.state = State::ScriptDataEscapedState;
                 }
                 State::ScriptDataEscapedEndTagNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
 
                     // we use this flag because a lot of matches will actually do the same thing
                     let mut consume_anything_else = false;
@@ -913,7 +929,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataDoubleEscapeStartState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -943,7 +959,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 State::ScriptDataDoubleEscapedState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.consume('-');
@@ -965,7 +981,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataDoubleEscapedDashState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.state = State::ScriptDataDoubleEscapedDashDashState;
@@ -991,7 +1007,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataDoubleEscapedDashDashState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => self.consume('-'),
                         Some('<') => {
@@ -1018,7 +1034,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataDoubleEscapedLessThanSignState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('/') => {
                             self.temporary_buffer = vec![];
@@ -1032,7 +1048,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::ScriptDataDoubleEscapeEndState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1062,7 +1078,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::BeforeAttributeNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1090,7 +1106,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AttributeNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1119,7 +1135,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AfterAttributeNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1145,7 +1161,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 State::BeforeAttributeValueState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1172,7 +1188,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AttributeValueDoubleQuotedState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('"') => self.state = State::AfterAttributeValueQuotedState,
                         Some('&') => _ = self.consume_character_reference(Some('"'), true),
@@ -1190,7 +1206,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AttributeValueSingleQuotedState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('\'') => self.state = State::AfterAttributeValueQuotedState,
                         Some('&') => _ = self.consume_character_reference(Some('\''), true),
@@ -1208,7 +1224,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AttributeValueUnquotedState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1241,7 +1257,7 @@ impl<'a> Tokenizer<'a> {
                 }
                 // State::CharacterReferenceInAttributeValueState => {}
                 State::AfterAttributeValueQuotedState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1264,7 +1280,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::SelfClosingStartState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('>') => {
                             self.set_is_closing_in_current_token(true);
@@ -1283,7 +1299,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::BogusCommentState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('>') => {
                             emit_current_token!(self);
@@ -1345,7 +1361,7 @@ impl<'a> Tokenizer<'a> {
                     self.state = State::BogusCommentState;
                 }
                 State::CommentStartState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.state = State::CommentStartDashState;
@@ -1362,7 +1378,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::CommentStartDashState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.state = State::CommentEndState;
@@ -1385,7 +1401,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::CommentState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('<') => {
                             add_to_token_value!(self, c.unwrap());
@@ -1407,7 +1423,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::CommentLessThanSignState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('!') => {
                             add_to_token_value!(self, c.unwrap());
@@ -1423,7 +1439,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 State::CommentLessThanSignBangState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.state = State::CommentLessThanSignBangDashState;
@@ -1435,7 +1451,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 State::CommentLessThanSignBangDashState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.state = State::CommentLessThanSignBangDashDashState;
@@ -1447,7 +1463,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 State::CommentLessThanSignBangDashDashState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         None | Some('>') => {
                             self.stream.unread();
@@ -1461,7 +1477,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 State::CommentEndDashState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             self.state = State::CommentEndState;
@@ -1479,7 +1495,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::CommentEndState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('>') => {
                             emit_current_token!(self);
@@ -1501,7 +1517,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::CommentEndBangState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('-') => {
                             add_to_token_value!(self, '-');
@@ -1530,7 +1546,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::DocTypeState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1544,7 +1560,7 @@ impl<'a> Tokenizer<'a> {
                             self.parse_error(ParserError::EofInDoctype);
 
                             emit_token!(self, Token::DocTypeToken{
-                                name: "".to_string(),
+                                name: None,
                                 force_quirks: true,
                                 pub_identifier: None,
                                 sys_identifier: None,
@@ -1560,7 +1576,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::BeforeDocTypeNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1570,8 +1586,8 @@ impl<'a> Tokenizer<'a> {
                         }
                         Some(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::DocTypeToken{
-                                name: "".to_string(),
-                                force_quirks: true,
+                                name: None,
+                                force_quirks: false,
                                 pub_identifier: None,
                                 sys_identifier: None,
                             });
@@ -1582,7 +1598,7 @@ impl<'a> Tokenizer<'a> {
                         Some(CHAR_NUL) => {
                             self.parse_error(ParserError::UnexpectedNullCharacter);
                             self.current_token = Some(Token::DocTypeToken{
-                                name: "".to_string(),
+                                name: None,
                                 force_quirks: false,
                                 pub_identifier: None,
                                 sys_identifier: None,
@@ -1594,7 +1610,7 @@ impl<'a> Tokenizer<'a> {
                         Some('>') => {
                             self.parse_error(ParserError::MissingDoctypeName);
                             emit_token!(self, Token::DocTypeToken{
-                                name: "".to_string(),
+                                name: None,
                                 force_quirks: true,
                                 pub_identifier: None,
                                 sys_identifier: None,
@@ -1607,7 +1623,7 @@ impl<'a> Tokenizer<'a> {
                             self.parse_error(ParserError::EofInDoctype);
 
                             emit_token!(self, Token::DocTypeToken{
-                                name: "".to_string(),
+                                name: None,
                                 force_quirks: true,
                                 pub_identifier: None,
                                 sys_identifier: None,
@@ -1617,7 +1633,7 @@ impl<'a> Tokenizer<'a> {
                         }
                         _ => {
                             self.current_token = Some(Token::DocTypeToken{
-                                name: "".to_string(),
+                                name: None,
                                 force_quirks: false,
                                 pub_identifier: None,
                                 sys_identifier: None,
@@ -1629,7 +1645,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::DocTypeNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1654,7 +1670,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AfterDocTypeNameState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1673,6 +1689,7 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::DataState;
                         }
                         _ => {
+                            self.stream.unread();
                             if self.stream.look_ahead_slice(6).to_uppercase() == "PUBLIC" {
                                 self.stream.seek(self.stream.position.offset + 6);
                                 self.state = State::AfterDocTypePublicKeywordState;
@@ -1685,13 +1702,12 @@ impl<'a> Tokenizer<'a> {
                             }
                             self.parse_error(ParserError::InvalidCharacterSequenceAfterDoctypeName);
                             self.set_quirks_mode(true);
-                            self.stream.unread();
                             self.state = State::BogusDocTypeState;
                         }
                     }
                 }
                 State::AfterDocTypePublicKeywordState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1728,7 +1744,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::BeforeDocTypePublicIdentifierState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1765,7 +1781,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::DocTypePublicIdentifierDoubleQuotedState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('"') => self.state = State::AfterDoctypePublicIdentifierState,
                         Some(CHAR_NUL) => {
@@ -1788,7 +1804,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::DocTypePublicIdentifierSingleQuotedState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('\'') => self.state = State::AfterDoctypePublicIdentifierState,
                         Some(CHAR_NUL) => {
@@ -1811,7 +1827,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AfterDoctypePublicIdentifierState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1846,7 +1862,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::BetweenDocTypePublicAndSystemIdentifiersState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1881,12 +1897,12 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::AfterDocTypeSystemKeywordState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
                         Some(CHAR_FF) |
-                        Some(CHAR_SPACE) => self.state = State::BeforeDocTypeSystemIdentifiedState,
+                        Some(CHAR_SPACE) => self.state = State::BeforeDocTypeSystemIdentifierState,
                         Some('"') => {
                             self.parse_error(ParserError::MissingWhitespaceAfterDoctypeSystemKeyword);
                             set_system_identifier!(self, String::new());
@@ -1917,8 +1933,8 @@ impl<'a> Tokenizer<'a> {
                         }
                     }
                 }
-                State::BeforeDocTypeSystemIdentifiedState => {
-                    let c = self.stream.read_char();
+                State::BeforeDocTypeSystemIdentifierState => {
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -1955,9 +1971,9 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::DocTypeSystemIdentifierDoubleQuotedState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
-                        Some('"') => self.state = State::AfterDocTypeSystemIdentifiedState,
+                        Some('"') => self.state = State::AfterDocTypeSystemIdentifierState,
                         Some(CHAR_NUL) => {
                             self.parse_error(ParserError::UnexpectedNullCharacter);
                             add_system_identifier!(self, CHAR_REPLACEMENT);
@@ -1979,9 +1995,9 @@ impl<'a> Tokenizer<'a> {
 
                 }
                 State::DocTypeSystemIdentifierSingleQuotedState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
-                        Some('\'') => self.state = State::AfterDoctypeSystemIdentifierState,
+                        Some('\'') => self.state = State::AfterDocTypeSystemIdentifierState,
                         Some(CHAR_NUL) => {
                             self.parse_error(ParserError::UnexpectedNullCharacter);
                             add_system_identifier!(self, CHAR_REPLACEMENT);
@@ -2002,8 +2018,8 @@ impl<'a> Tokenizer<'a> {
                     }
 
                 }
-                State::AfterDocTypeSystemIdentifiedState => {
-                    let c = self.stream.read_char();
+                State::AfterDocTypeSystemIdentifierState => {
+                    let c = read_char!(self);
                     match c {
                         Some(CHAR_TAB) |
                         Some(CHAR_LF) |
@@ -2030,7 +2046,7 @@ impl<'a> Tokenizer<'a> {
 
                 }
                 State::BogusDocTypeState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some('>') => {
                             emit_current_token!(self);
@@ -2047,7 +2063,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::CDataSectionState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(']') => {
                             self.state = State::CDataSectionBracketState;
@@ -2061,7 +2077,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 State::CDataSectionBracketState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(']') => self.state = State::CDataSectionEndState,
                         _ => {
@@ -2072,7 +2088,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 },
                 State::CDataSectionEndState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         Some(']') => self.consume(']'),
                         Some('>') => self.state = State::DataState,

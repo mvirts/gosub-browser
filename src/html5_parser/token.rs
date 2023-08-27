@@ -13,7 +13,7 @@ pub enum TokenType {
 #[derive(Clone, PartialEq)]
 pub enum Token {
     DocTypeToken {
-        name: String,
+        name: Option<String>,
         force_quirks: bool,
         pub_identifier: Option<String>,
         sys_identifier: Option<String>,
@@ -45,7 +45,7 @@ impl std::fmt::Display for Token {
                 pub_identifier,
                 sys_identifier,
             } => {
-                let mut result = format!("<!DOCTYPE {}", name);
+                let mut result = format!("<!DOCTYPE {:?}", name);
                 if *force_quirks {
                     result.push_str(" FORCE_QUIRKS!");
                 }

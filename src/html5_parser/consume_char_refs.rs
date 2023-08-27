@@ -21,6 +21,18 @@ pub enum CcrState {
     NumericalCharacterReferenceEndState,
 }
 
+macro_rules! read_char {
+    ($self:expr) => {
+        {
+        let c = $self.stream.read_char();
+        if c.is_some() && $self.is_surrogate(c.unwrap() as u32) {
+            $self.parse_error(ParserError::SurrogateInInputStream);
+        }
+        c
+        }
+    }
+}
+
 macro_rules! consume_temp_buffer {
     ($self:expr, $as_attribute:expr) => {
         for c in $self.temporary_buffer.clone() {
@@ -47,7 +59,7 @@ impl<'a> Tokenizer<'a> {
                 CcrState::CharacterReferenceState => {
                     self.temporary_buffer = vec!['&'];
 
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         None => {
                             consume_temp_buffer!(self, as_attribute);
@@ -94,7 +106,7 @@ impl<'a> Tokenizer<'a> {
                     ccr_state = CcrState::AmbiguousAmpersandState;
                 }
                 CcrState::AmbiguousAmpersandState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         None => return,
                         Some('A'..='Z') | Some('a'..='z') | Some('0'..='9') => {
@@ -118,7 +130,7 @@ impl<'a> Tokenizer<'a> {
                 CcrState::NumericCharacterReferenceState => {
                     char_ref_code = Some(0);
 
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         None => ccr_state = CcrState::NumericalCharacterReferenceEndState,
                         Some('X') | Some('x') => {
@@ -132,7 +144,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 CcrState::HexadecimalCharacterReferenceStartState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         None => ccr_state = CcrState::NumericalCharacterReferenceEndState,
                         Some('0'..='9') | Some('A'..='Z') | Some('a'..='z') => {
@@ -149,7 +161,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 CcrState::DecimalCharacterReferenceStartState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         None => ccr_state = CcrState::NumericalCharacterReferenceEndState,
                         Some('0'..='9') => {
@@ -166,7 +178,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 CcrState::HexadecimalCharacterReferenceState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         None => ccr_state = CcrState::NumericalCharacterReferenceEndState,
                         Some('0'..='9') => {
@@ -204,7 +216,7 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 CcrState::DecimalCharacterReferenceState => {
-                    let c = self.stream.read_char();
+                    let c = read_char!(self);
                     match c {
                         None => ccr_state = CcrState::NumericalCharacterReferenceEndState,
                         Some('0'..='9') => {
@@ -264,7 +276,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn is_surrogate(&self, num: u32) -> bool
+    pub(crate) fn is_surrogate(&self, num: u32) -> bool
     {
         num >= 0xD800 && num <= 0xDFFF
     }
