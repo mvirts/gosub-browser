@@ -43,9 +43,11 @@ pub struct Error {
 }
 
 pub struct TestResults{
-    succeeded: usize,
-    failed: usize,
-    tests: usize,
+    tests: usize,               // Number of tests (as defined in the suite)
+    assertions: usize,          // Number of assertions (different combinations of input/output per test)
+    succeeded: usize,           // How many succeeded assertions
+    failed: usize,              // How many failed assertions
+    failed_position: usize,     // How many failed assertions where position is not correct
 }
 
 fn main () -> io::Result<()> {
@@ -53,9 +55,11 @@ fn main () -> io::Result<()> {
     let dir = env::args().nth(1).unwrap_or(default_dir.to_string());
 
     let mut results = TestResults{
+        tests: 0,
+        assertions: 0,
         succeeded: 0,
         failed: 0,
-        tests: 0,
+        failed_position: 0,
     };
     
     for entry in fs::read_dir(dir + "/tokenizer")? {
@@ -80,16 +84,15 @@ fn main () -> io::Result<()> {
         }
     }
 
-
-    println!("🏁 Tests completed: Ran {} tests, {} succeeded, {} failed", results.tests, results.succeeded, results.failed);
+    println!("🏁 Tests completed: Ran {} tests, {} assertions, {} succeeded, {} failed ({} position failures)", results.tests, results.assertions, results.succeeded, results.failed, results.failed_position);
     Ok(())
 }
 
 fn run_token_test(test: &Test, results: &mut TestResults)
 {
-    // if ! test.description.eq("DOCTYPE with publicId") {
-    //     return;
-    // }
+    if ! test.description.eq("</ \\u0000") {
+        return;
+    }
 
     println!("🧪 running test: {}", test.description);
 
@@ -122,52 +125,77 @@ fn run_token_test(test: &Test, results: &mut TestResults)
         };
 
         is.read_from_str(input.as_str(), None);
-        let mut tknzr = Tokenizer::new(&mut is, Some(Options{
+        let mut tokenizer = Tokenizer::new(&mut is, Some(Options{
             initial_state: state,
             last_start_tag: test.last_start_tag.clone().unwrap_or(String::from("")),
         }));
 
         // There can be multiple tokens to match. Make sure we match all of them
         for expected_token in test.output.iter() {
-            let t = tknzr.next_token();
+            let t = tokenizer.next_token();
             if ! match_token(t, expected_token, test.double_escaped.unwrap_or(false)) {
+                results.assertions += 1;
                 results.failed += 1;
-                continue;
             }
 
-            if !test.errors.is_empty() && ! match_errors(&tknzr, &test.errors) {
-                results.failed += 1;
-                continue;
+            // Check error messages
+            match match_errors(&tokenizer, &test.errors) {
+                ErrorResult::Failure => {
+                    results.assertions += 1;
+                    results.failed += 1;
+                },
+                ErrorResult::PositionFailure => {
+                    results.assertions += 1;
+                    results.failed += 1;
+                    results.failed_position += 1;
+                },
+                ErrorResult::Success => {
+                    results.assertions += 1;
+                    results.succeeded += 1;
+                }
             }
-
-            results.succeeded += 1;
         }
     }
 
     println!("----------------------------------------");
 }
 
-fn match_errors(tknzr: &Tokenizer, errors: &Vec<Error>) -> bool {
-    for want_err in errors {
-        let mut found = false;
+#[derive(PartialEq)]
+enum ErrorResult {
+    Success,
+    Failure,
+    PositionFailure,
+}
 
-        for got_err in tknzr.get_errors() {
-            if got_err.message == want_err.code && got_err.line == want_err.line && got_err.col == want_err.col {
-                found = true;
-                println!("✅ found parse error '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
-                break;
+fn match_errors(tokenizer: &Tokenizer, errors: &Vec<Error>) -> ErrorResult {
+    let mut result = ErrorResult::Success;
+    for want_err in errors {
+
+        
+
+        for got_err in tokenizer.get_errors() {
+            if got_err.message != want_err.code {
+                println!("❌ Expected parse error '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
+                result = ErrorResult::Failure;
+            } else if got_err.line != want_err.line || got_err.col != want_err.col {
+                println!("❌ Expected position error '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
+                result = ErrorResult::PositionFailure;
             }
-        }
-        if ! found {
-            println!("❌ expected parse error '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
-            for got_err in tknzr.get_errors() {
-                println!("    '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
+
+            if result != ErrorResult::Success {
+                println!("   Parser errors generated:");
+                for got_err in tokenizer.get_errors() {
+                    println!("     * '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
+                }
+
+                return result;
             }
-            return false;
+
+            println!("✅ Found parse error '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
         }
     }
 
-    true
+    result
 }
 
 fn match_token(have: Token, expected: &[Value], double_escaped: bool) -> bool {
@@ -282,7 +310,7 @@ fn escape(input: &str) -> String {
     let re = Regex::new(r"\\u([0-9a-fA-F]{4})").unwrap();
     re.replace_all(input, |caps: &regex::Captures| {
         let hex_val = u32::from_str_radix(&caps[1], 16).unwrap();
-        // special case for converting surrogate codepoints to char (protip: you can't)
+        // special case for converting surrogate codepoints to char (pro-tip: you can't)
         if (0xD800..=0xDFFF).contains(&hex_val) {
             return caps[1].to_string();
         }

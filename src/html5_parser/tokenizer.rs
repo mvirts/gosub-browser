@@ -398,6 +398,11 @@ impl<'a> Tokenizer<'a> {
                         },
                         _ => {
                             self.parse_error(ParserError::InvalidFirstCharacterOfTagName);
+
+                            self.current_token = Some(Token::CommentToken{
+                                value: "".into(),
+                            });
+                            self.stream.unread();
                             self.state = State::BogusCommentState;
                         }
                     }
