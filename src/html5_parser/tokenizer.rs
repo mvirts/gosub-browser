@@ -36,9 +36,16 @@ macro_rules! read_char {
     ($self:expr) => {
         {
             let c = $self.stream.read_char();
-            if c.is_some() && $self.is_surrogate(c.unwrap() as u32) {
-                $self.parse_error(ParserError::SurrogateInInputStream);
+            match c {
+                Some(c) if $self.is_surrogate(c as u32) => {
+                    $self.parse_error(ParserError::SurrogateInInputStream);
+                }
+                Some(c) if $self.is_control_char(c as u32) => {
+                    $self.parse_error(ParserError::ControlCharacterInInputStream);
+                }
+                _ => {}
             }
+
             c
         }
     }
@@ -236,8 +243,6 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
                 State::CharacterReferenceInDataState => {
-                    // @TODO: we get into trouble with &copy&, as the last ampersand will get collected by dataState, and consume_character_reference does not
-                    // consume the &.
                     _ = self.consume_character_reference(None, false);
                     self.state = State::DataState;
                 }
@@ -1331,20 +1336,20 @@ impl<'a> Tokenizer<'a> {
                         });
 
                         // Skip the two -- signs
-                        self.stream.seek(self.stream.position.offset + 2);
+                        self.stream.skip(2);
 
                         self.state = State::CommentStartState;
                         continue;
                     }
 
                     if self.stream.look_ahead_slice(7) == "DOCTYPE" {
-                        self.stream.seek(self.stream.position.offset + 7);
+                        self.stream.skip(7);
                         self.state = State::DocTypeState;
                         continue;
                     }
 
                     if self.stream.look_ahead_slice(7) == "[CDATA[" {
-                        self.stream.seek(self.stream.position.offset + 7);
+                        self.stream.skip(7);
 
                         // @TODO: If there is an adjusted current node and it is not an element in the HTML namespace,
                         // then switch to the CDATA section state. Otherwise, this is a cdata-in-html-content parse error.
@@ -1358,7 +1363,9 @@ impl<'a> Tokenizer<'a> {
                         continue;
                     }
 
+                    self.stream.unread();
                     self.parse_error(ParserError::IncorrectlyOpenedComment);
+                    self.stream.skip(1);
                     self.current_token = Some(Token::CommentToken{
                         value: "".into(),
                     });
@@ -1696,15 +1703,18 @@ impl<'a> Tokenizer<'a> {
                         _ => {
                             self.stream.unread();
                             if self.stream.look_ahead_slice(6).to_uppercase() == "PUBLIC" {
-                                self.stream.seek(self.stream.position.offset + 6);
+                                self.stream.skip(6);
                                 self.state = State::AfterDocTypePublicKeywordState;
                                 continue;
                             }
                             if self.stream.look_ahead_slice(6).to_uppercase() == "SYSTEM" {
-                                self.stream.seek(self.stream.position.offset + 6);
+                                self.stream.skip(6);
                                 self.state = State::AfterDocTypeSystemKeywordState;
                                 continue;
                             }
+                            // Make sure the parser is on the correct position again since we just
+                            // unread the character
+                            self.stream.skip(1);
                             self.parse_error(ParserError::InvalidCharacterSequenceAfterDoctypeName);
                             self.set_quirks_mode(true);
                             self.state = State::BogusDocTypeState;
@@ -2155,10 +2165,10 @@ impl<'a> Tokenizer<'a> {
     // Creates a parser log error message
     pub(crate) fn parse_error(&mut self, error: ParserError) {
         // Hack: when encountering eof, we need to have the previous position, not the current one.
-        let mut pos = self.stream.get_position(self.stream.position.offset - 1);
-        if self.stream.eof() {
-            pos = self.stream.get_position(self.stream.position.offset);
-        }
+        let pos = self.stream.get_position(self.stream.position.offset - 1);
+        // if self.stream.eof() {
+        //     pos = self.stream.get_position(self.stream.position.offset);
+        // }
         // match error {
         //     ParserError::EofBeforeTagName |
         //     ParserError::EofInCdata |

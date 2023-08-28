@@ -95,10 +95,13 @@ impl InputStream {
         self.position = self.get_position(off);
     }
 
+    // Skip X characters
+    pub fn skip(&mut self, off: usize) { self.position = self.get_position(self.position.offset + off as i64); }
+
     // Retrieves position structure for given offset
     pub fn get_position(&mut self, mut seek_offset: i64) -> Position {
         // Cap to length
-        if seek_offset as usize > self.length {
+        if seek_offset as usize > self.length  {
             seek_offset = (self.length - 1) as i64;     // cast?
         }
 
@@ -229,6 +232,13 @@ impl InputStream {
         } else {
             // otherwise, we have reached the end of the stream
             self.has_read_eof = true;
+
+            // This is a kind of dummy position so the end of the files are read correctly.
+            self.position = Position{
+                offset: self.position.offset + 1,
+                line: self.position.line,
+                col: self.position.col + 1,
+            };
             None
         }
     }
@@ -237,6 +247,7 @@ impl InputStream {
         // We already read eof, so "unread" the eof by unsetting the flag
         if self.has_read_eof {
             self.has_read_eof = false;
+            self.position = self.get_position(self.position.offset - 1);
             return;
         }
 

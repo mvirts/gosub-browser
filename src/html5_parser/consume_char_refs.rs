@@ -85,10 +85,6 @@ impl<'a> Tokenizer<'a> {
                     if let Some(entity) = self.find_entity() {
                         let entity_chars = *TOKEN_NAMED_CHARS.get(entity.as_str()).unwrap();
 
-                        if entity.chars().last().unwrap() != ';' {
-                            self.parse_error(ParserError::MissingSemicolonAfterCharacterReference);
-                        }
-
                         // Flush codepoints consumed as character reference
                         for c in entity_chars.chars() {
                             if as_attribute {
@@ -97,8 +93,17 @@ impl<'a> Tokenizer<'a> {
                                 self.consume(c);
                             }
                         }
-
                         self.temporary_buffer.clear();
+
+                        self.stream.skip(entity.len());
+
+                        if entity.chars().last().unwrap() != ';' {
+                            // We need to return the position where we expected the ';'
+                            self.stream.read_char();    // @TODO: We can't use skip, as this might interfere with EOF stuff (fix it)
+                            self.parse_error(ParserError::MissingSemicolonAfterCharacterReference);
+                            self.stream.unread();
+                        }
+
                         return;
                     }
 
@@ -259,8 +264,9 @@ impl<'a> Tokenizer<'a> {
                         char_ref_code = CHAR_REPLACEMENT as u32;
                     }
                     if self.is_control_char(char_ref_code) || char_ref_code == 0x0D {
+                        self.stream.read_char();
+                        self.stream.read_char();
                         self.parse_error(ParserError::ControlCharacterReference);
-                        // char_ref_code = CHAR_REPLACEMENT as u32;
 
                         if TOKEN_REPLACEMENTS.contains_key(&char_ref_code) {
                             char_ref_code = *TOKEN_REPLACEMENTS.get(&char_ref_code).unwrap() as u32;
@@ -291,7 +297,7 @@ impl<'a> Tokenizer<'a> {
         ].contains(&num)
     }
 
-    fn is_control_char(&self, num: u32) -> bool
+    pub(crate) fn is_control_char(&self, num: u32) -> bool
     {
         // White spaces are ok
         if [0x0009, 0x000A, 0x000C, 0x000D, 0x0020].contains(&num) {
@@ -308,7 +314,7 @@ impl<'a> Tokenizer<'a> {
         for i in (0..=s.len()).rev() {
             if TOKEN_NAMED_CHARS.contains_key(&s[0..i]) {
                 // Move forward with the number of chars matching
-                self.stream.seek(self.stream.position.offset + i as i64);
+                // self.stream.skip(i);
                 return Some(String::from(&s[0..i]));
             }
         }

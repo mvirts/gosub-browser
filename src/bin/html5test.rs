@@ -1,4 +1,5 @@
 use std::{env, fs, io};
+use std::collections::HashSet;
 
 use serde_json::Value;
 use gosub_engine::html5_parser::input_stream::InputStream;
@@ -90,7 +91,7 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test, results: &mut TestResults)
 {
-    if ! test.description.eq("</ \\u0000") {
+    if ! test.description.contains("Undefined named entity in a double-quoted attribute value ending in semicolon and whose name starts with a known entity name.") {
         return;
     }
 
@@ -138,20 +139,34 @@ fn run_token_test(test: &Test, results: &mut TestResults)
                 results.failed += 1;
             }
 
+            if tokenizer.errors.len() != test.errors.len() {
+                println!("❌ Unexpected errors found (wanted {}, got {}): ", test.errors.len(), tokenizer.errors.len());
+                for want_err in &test.errors {
+                    println!("     * Want: '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
+                }
+                for got_err in tokenizer.get_errors() {
+                    println!("     * Got: '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
+                }
+                results.assertions += 1;
+                results.failed += 1;
+            }
+
             // Check error messages
-            match match_errors(&tokenizer, &test.errors) {
-                ErrorResult::Failure => {
-                    results.assertions += 1;
-                    results.failed += 1;
-                },
-                ErrorResult::PositionFailure => {
-                    results.assertions += 1;
-                    results.failed += 1;
-                    results.failed_position += 1;
-                },
-                ErrorResult::Success => {
-                    results.assertions += 1;
-                    results.succeeded += 1;
+            for error in &test.errors {
+                match match_error(&tokenizer, &error) {
+                    ErrorResult::Failure => {
+                        results.assertions += 1;
+                        results.failed += 1;
+                    },
+                    ErrorResult::PositionFailure => {
+                        results.assertions += 1;
+                        results.failed += 1;
+                        results.failed_position += 1;
+                    },
+                    ErrorResult::Success => {
+                        results.assertions += 1;
+                        results.succeeded += 1;
+                    }
                 }
             }
         }
@@ -162,37 +177,41 @@ fn run_token_test(test: &Test, results: &mut TestResults)
 
 #[derive(PartialEq)]
 enum ErrorResult {
-    Success,
-    Failure,
-    PositionFailure,
+    Success,            // Found the correct error
+    Failure,            // Didn't find the error (not even with incorrect position)
+    PositionFailure,    // Found the error, but on a incorrect position
 }
 
-fn match_errors(tokenizer: &Tokenizer, errors: &Vec<Error>) -> ErrorResult {
-    let mut result = ErrorResult::Success;
-    for want_err in errors {
+fn match_error(tokenizer: &Tokenizer, expected_err: &Error) -> ErrorResult {
 
-        
-
-        for got_err in tokenizer.get_errors() {
-            if got_err.message != want_err.code {
-                println!("❌ Expected parse error '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
-                result = ErrorResult::Failure;
-            } else if got_err.line != want_err.line || got_err.col != want_err.col {
-                println!("❌ Expected position error '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
-                result = ErrorResult::PositionFailure;
-            }
-
-            if result != ErrorResult::Success {
-                println!("   Parser errors generated:");
-                for got_err in tokenizer.get_errors() {
-                    println!("     * '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
-                }
-
-                return result;
-            }
-
+    // Iterate all generated errors to see if we have an exact match
+    for got_err in tokenizer.get_errors() {
+        if got_err.message == expected_err.code && got_err.line == expected_err.line && got_err.col == expected_err.col {
+            // Found an exact match
             println!("✅ Found parse error '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
+
+            return ErrorResult::Success;
         }
+    }
+
+    // Try and find an error that matches the code, but has a different line/pos. Even though
+    // it's not always correct, it might be a off-by-one position.
+    let mut result = ErrorResult::Failure;
+    for got_err in tokenizer.get_errors() {
+        if got_err.message == expected_err.code {
+            if got_err.line != expected_err.line || got_err.col != expected_err.col {
+                // println!("❌ Expected error '{}' at {}:{}", expected_err.code, expected_err.line, expected_err.col);
+                result = ErrorResult::PositionFailure;
+                break;
+            }
+        }
+    }
+
+    println!("❌ Expected error '{}' at {}:{}", expected_err.code, expected_err.line, expected_err.col);
+
+    println!("   Parser errors generated:");
+    for got_err in tokenizer.get_errors() {
+        println!("     * '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
     }
 
     result
@@ -217,82 +236,27 @@ fn match_token(have: Token, expected: &[Value], double_escaped: bool) -> bool {
 
     match have {
         Token::DocTypeToken{name, force_quirks, pub_identifier, sys_identifier} => {
-            let expected_name = expected.get(1).unwrap().as_str();
-            let expected_pub = expected.get(2).unwrap().as_str();
-            let expected_sys = expected.get(3).unwrap().as_str();
-            let expected_quirk = expected.get(4).unwrap().as_bool();
-
-            if expected_name.is_none() && ! name.is_none() {
-                println!("❌ Incorrect doctype (no name expected, but got '{}')", name.unwrap());
+            if check_match_doctype(expected, name, force_quirks, pub_identifier, sys_identifier).is_err() {
                 return false;
             }
-            if expected_name.is_some() && expected_name != Some(name.clone().unwrap().as_str()) {
-                println!("❌ Incorrect doctype (wanted name: '{}', got: '{}')", expected_name.unwrap(), name.unwrap().as_str());
-                return false;
-            }
-            if expected_quirk.is_some() && expected_quirk.unwrap() == force_quirks {
-                println!("❌ Incorrect doctype (wanted quirk: '{}')", expected_quirk.unwrap());
-                return false;
-            }
-            if expected_pub != pub_identifier.as_deref() {
-                println!("❌ Incorrect doctype (wanted pub id: '{:?}', got '{:?}')", expected_pub, pub_identifier);
-                return false;
-            }
-            if expected_sys != sys_identifier.as_deref() {
-                println!("❌ Incorrect doctype (wanted sys id: '{:?}', got '{:?}')", expected_sys, sys_identifier);
-                return false;
-            }
-
         }
-        Token::StartTagToken{name, attributes, ..} => {
-            let output = expected.get(1).unwrap().as_str().unwrap();
-            // check name
-            if name.ne(&output) {
-                println!("❌ Incorrect start tag (wanted: '{}', got '{}'", name, output);
+        Token::StartTagToken{name, attributes, is_self_closing} => {
+            if check_match_starttag(expected, name, attributes, is_self_closing).is_err() {
                 return false;
             }
-
-            // @TODO: check attributes!
-            if attributes.is_empty() {
-                println!("ok");
-            }
-
-            // check self-closing
-            // if is_self_closing != expected.get(2).unwrap().as_bool().unwrap() {
-            //     println!("❌ Incorrect start tag (self-closing is not {}", if is_self_closing { "true" } else { "false"});
-            //     return false;
-            // }
-
-            // check attrs
-
-
         }
         Token::EndTagToken{name} => {
-            let output_ref = expected.get(1).unwrap().as_str().unwrap();
-            let output = if double_escaped { escape(output_ref) } else { output_ref.to_string() };
-
-            if name.as_str() != output {
-                println!("❌ Incorrect end tag");
+            if check_match_endtag(expected, name, double_escaped).is_err() {
                 return false;
             }
         }
         Token::CommentToken{value} => {
-            let output_ref = expected.get(1).unwrap().as_str().unwrap();
-            let output = if double_escaped { escape(output_ref) } else { output_ref.to_string() };
-
-            if value.as_str() != output {
-                println!("❌ Incorrect text found in comment token");
-                println!("    wanted: '{}', got: '{}'", output, value.as_str());
+            if check_match_comment(expected, value, double_escaped).is_err() {
                 return false;
             }
         }
         Token::TextToken{value} => {
-            let output_ref = expected.get(1).unwrap().as_str().unwrap();
-            let output = if double_escaped { escape(output_ref) } else { output_ref.to_string() };
-
-            if value.ne(&output) {
-                println!("❌ Incorrect text found in text token");
-                println!("    wanted: '{}', got: '{}'", output, value.as_str());
+            if check_match_text(expected, value, double_escaped).is_err() {
                 return false;
             }
         },
@@ -304,6 +268,129 @@ fn match_token(have: Token, expected: &[Value], double_escaped: bool) -> bool {
 
     println!("✅ Test passed");
     true
+}
+
+fn check_match_starttag(expected: &[Value], name: String, attributes: Vec<(String, String)>, is_self_closing: bool) -> Result<(), ()> {
+    let expected_name = expected.get(1).and_then(|v| v.as_str()).unwrap();
+    let expected_attrs = expected.get(2).and_then(|v| v.as_object());
+    let expected_self_closing = expected.get(3).and_then(|v| v.as_bool());
+
+    if expected_name != name {
+        println!("❌ Incorrect start tag (wanted: '{}', got '{}'", name, expected_name);
+        return Err(());
+    }
+
+    if expected_self_closing.is_some() && expected_self_closing.unwrap() != is_self_closing {
+        println!("❌ Incorrect start tag (expected selfclosing: {})", !is_self_closing);
+        return Err(());
+    }
+
+    if expected_attrs.is_none() && attributes.len() == 0 {
+        // No attributes to check
+        return Ok(());
+    }
+
+
+    // Convert the expected attr to Vec<(string, string)>
+    let expected_attrs: Vec<(String, String)> = expected_attrs.map_or(Vec::new(), |map| {
+        map.iter()
+            .filter_map(|(key, value)| {
+                value.as_str().map(|v| (key.clone(), v.to_string()))
+            })
+            .collect()
+    });
+
+    let set1: HashSet<_> = expected_attrs.iter().collect();
+    let set2: HashSet<_> = attributes.iter().collect();
+
+    if set1 != set2 {
+        println!("❌ Attributes mismatch");
+
+        for attr in expected_attrs {
+            println!("     * Want: '{}={}'", &attr.0, &attr.1);
+        }
+        for attr in attributes {
+            println!("     * Got: '{}={}'", attr.0, attr.1);
+        }
+
+        return Err(())
+    }
+
+    Ok(())
+}
+
+fn check_match_comment(expected: &[Value], value: String, is_double_escaped: bool) -> Result<(), ()> {
+    let output_ref = expected.get(1).unwrap().as_str().unwrap();
+    let output = if is_double_escaped { escape(output_ref) } else { output_ref.to_string() };
+
+    if value.ne(&output) {
+        println!("❌ Incorrect text found in comment token");
+        println!("    wanted: '{}', got: '{}'", output, value.as_str());
+        return Err(());
+    }
+
+    Ok(())
+}
+
+fn check_match_text(expected: &[Value], value: String, is_double_escaped: bool) -> Result<(), ()> {
+    let output_ref = expected.get(1).unwrap().as_str().unwrap();
+    let output = if is_double_escaped { escape(output_ref) } else { output_ref.to_string() };
+
+    if value.ne(&output) {
+        println!("❌ Incorrect text found in text token");
+        println!("    wanted: '{}', got: '{}'", output, value.as_str());
+        return Err(());
+    }
+
+    Ok(())
+}
+
+fn check_match_endtag(expected: &[Value], name: String, is_double_escaped: bool) -> Result<(), ()> {
+    let output_ref = expected.get(1).unwrap().as_str().unwrap();
+    let output = if is_double_escaped { escape(output_ref) } else { output_ref.to_string() };
+
+    if name.as_str() != output {
+        println!("❌ Incorrect end tag");
+        return Err(());
+    }
+    Ok(())
+}
+
+// Check if a given doctype matches the expected result
+fn check_match_doctype(
+    expected: &[Value],
+    name: Option<String>,
+    force_quirks: bool,
+    pub_identifier: Option<String>,
+    sys_identifier: Option<String>
+) -> Result<(), ()> {
+    let expected_name = expected.get(1).unwrap().as_str();
+    let expected_pub = expected.get(2).unwrap().as_str();
+    let expected_sys = expected.get(3).unwrap().as_str();
+    let expected_quirk = expected.get(4).unwrap().as_bool();
+
+    if expected_name.is_none() && ! name.is_none() {
+        println!("❌ Incorrect doctype (no name expected, but got '{}')", name.unwrap());
+        return Err(());
+    }
+    if expected_name.is_some() && expected_name != Some(name.clone().unwrap().as_str()) {
+        println!("❌ Incorrect doctype (wanted name: '{}', got: '{}')", expected_name.unwrap(), name.unwrap().as_str());
+        return Err(());
+    }
+    if expected_quirk.is_some() && expected_quirk.unwrap() == force_quirks {
+        println!("❌ Incorrect doctype (wanted quirk: '{}')", expected_quirk.unwrap());
+        return Err(());
+    }
+    if expected_pub != pub_identifier.as_deref() {
+        println!("❌ Incorrect doctype (wanted pub id: '{:?}', got '{:?}')", expected_pub, pub_identifier);
+        return Err(());
+    }
+    if expected_sys != sys_identifier.as_deref() {
+        println!("❌ Incorrect doctype (wanted sys id: '{:?}', got '{:?}')", expected_sys, sys_identifier);
+        return Err(());
+    }
+
+    Ok(())
 }
 
 fn escape(input: &str) -> String {
