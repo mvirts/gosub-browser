@@ -24,11 +24,21 @@ pub enum CcrState {
 macro_rules! read_char {
     ($self:expr) => {
         {
-        let c = $self.stream.read_char();
-        if c.is_some() && $self.is_surrogate(c.unwrap() as u32) {
-            $self.parse_error(ParserError::SurrogateInInputStream);
-        }
-        c
+            let c = $self.stream.read_char();
+            match c {
+                Some(c) if $self.is_surrogate(c as u32) => {
+                    $self.parse_error(ParserError::SurrogateInInputStream);
+                }
+                Some(c) if $self.is_control_char(c as u32) => {
+                    $self.parse_error(ParserError::ControlCharacterInInputStream);
+                }
+                Some(c) if $self.is_noncharacter(c as u32) => {
+                    $self.parse_error(ParserError::NoncharacterInInputStream);
+                }
+                _ => {}
+            }
+
+            c
         }
     }
 }
@@ -83,6 +93,23 @@ impl<'a> Tokenizer<'a> {
                 },
                 CcrState::NamedCharacterReferenceState => {
                     if let Some(entity) = self.find_entity() {
+
+                        let c = self.stream.look_ahead(1).unwrap_or('\u{0000}');
+                        if as_attribute && entity.chars().last().unwrap() != ';' && (c == '=' || c.is_ascii_alphanumeric()) {
+                            // for historical reasons, the codepoints should be flushed
+
+                            if as_attribute {
+                                self.current_attr_value.push('&');
+                            } else {
+                                self.consume('&');
+                            }
+                            self.temporary_buffer.clear();
+
+                            return;
+                        }
+
+                        self.stream.skip(entity.len());
+
                         let entity_chars = *TOKEN_NAMED_CHARS.get(entity.as_str()).unwrap();
 
                         // Flush codepoints consumed as character reference
@@ -94,8 +121,6 @@ impl<'a> Tokenizer<'a> {
                             }
                         }
                         self.temporary_buffer.clear();
-
-                        self.stream.skip(entity.len());
 
                         if entity.chars().last().unwrap() != ';' {
                             // We need to return the position where we expected the ';'
@@ -256,12 +281,14 @@ impl<'a> Tokenizer<'a> {
                     }
 
                     if self.is_surrogate(char_ref_code) {
+                        self.stream.read_char();
                         self.parse_error(ParserError::SurrogateCharacterReference);
                         char_ref_code = CHAR_REPLACEMENT as u32;
                     }
                     if self.is_noncharacter(char_ref_code) {
+                        self.stream.read_char();
                         self.parse_error(ParserError::NoncharacterCharacterReference);
-                        char_ref_code = CHAR_REPLACEMENT as u32;
+                        // char_ref_code = CHAR_REPLACEMENT as u32;
                     }
                     if self.is_control_char(char_ref_code) || char_ref_code == 0x0D {
                         self.stream.read_char();
@@ -287,7 +314,7 @@ impl<'a> Tokenizer<'a> {
         num >= 0xD800 && num <= 0xDFFF
     }
 
-    fn is_noncharacter(&self, num: u32) -> bool
+    pub(crate) fn is_noncharacter(&self, num: u32) -> bool
     {
         (0xFDD0..=0xFDEF).contains(&num) || [
             0xFFFE, 0xFFFF, 0x1FFFE, 0x1FFFF, 0x2FFFE, 0x2FFFF, 0x3FFFE, 0x3FFFF,

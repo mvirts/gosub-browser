@@ -91,7 +91,7 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test, results: &mut TestResults)
 {
-    if ! test.description.contains("Undefined named entity in a double-quoted attribute value ending in semicolon and whose name starts with a known entity name.") {
+    if ! test.description.contains("CR in bogus comment state") {
         return;
     }
 
@@ -289,7 +289,6 @@ fn check_match_starttag(expected: &[Value], name: String, attributes: Vec<(Strin
         // No attributes to check
         return Ok(());
     }
-
 
     // Convert the expected attr to Vec<(string, string)>
     let expected_attrs: Vec<(String, String)> = expected_attrs.map_or(Vec::new(), |map| {

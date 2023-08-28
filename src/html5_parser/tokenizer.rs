@@ -19,6 +19,7 @@ pub struct Tokenizer<'a> {
     pub consumed: Vec<char>,            // Current consumed characters for current token
     pub current_attr_name: String,      // Current attribute name that we need to store temporary in case we are parsing attributes
     pub current_attr_value: String,     // Current attribute value that we need to store temporary in case we are parsing attributes
+    pub current_attrs: Vec<(String, String)>,  // Current attributes
     pub ignore_attribute: bool,         // The currently parsed attribute is to be ignored once completed (because it already exists on the current token)
     pub current_token: Option<Token>,   // Token that is currently in the making (if any)
     pub temporary_buffer: Vec<char>,    // Temporary buffer
@@ -42,6 +43,9 @@ macro_rules! read_char {
                 }
                 Some(c) if $self.is_control_char(c as u32) => {
                     $self.parse_error(ParserError::ControlCharacterInInputStream);
+                }
+                Some(c) if $self.is_noncharacter(c as u32) => {
+                    $self.parse_error(ParserError::NoncharacterInInputStream);
                 }
                 _ => {}
             }
@@ -196,6 +200,7 @@ impl<'a> Tokenizer<'a> {
             token_queue: vec![],
             current_attr_name: String::new(),
             current_attr_value: String::new(),
+            current_attrs: vec![],
             temporary_buffer: vec![],
             errors: vec![],
             ignore_attribute: false,
@@ -1102,14 +1107,16 @@ impl<'a> Tokenizer<'a> {
                         },
                         Some('=') => {
                             self.parse_error(ParserError::UnexpectedEqualsSignBeforeAttributeName);
-                            self.current_attr_name.clear();
-                            self.current_attr_value = String::new();
+
+                            self.store_and_clear_current_attribute();
+
                             self.stream.unread();
                             self.state = State::AttributeNameState;
                         }
                         _ => {
-                            self.current_attr_name.clear();
-                            self.current_attr_value = String::new();
+                            // Store an existing attribute if any and clear
+                            self.store_and_clear_current_attribute();
+
                             self.stream.unread();
                             self.state = State::AttributeNameState;
                         },
@@ -1156,8 +1163,10 @@ impl<'a> Tokenizer<'a> {
                         Some('/') => self.state = State::SelfClosingStartState,
                         Some('=') => self.state = State::BeforeAttributeValueState,
                         Some('>') => {
-                            self.state = State::DataState;
+                            self.store_and_clear_current_attribute();
+                            self.add_stored_attributes_to_current_token();
                             emit_current_token!(self);
+                            self.state = State::DataState;
                         }
                         None => {
                             self.parse_error(ParserError::EofInTag);
@@ -1188,6 +1197,9 @@ impl<'a> Tokenizer<'a> {
                         }
                         Some('>') => {
                             self.parse_error(ParserError::MissingAttributeValue);
+
+                            self.store_and_clear_current_attribute();
+                            self.add_stored_attributes_to_current_token();
                             emit_current_token!(self);
                             self.state = State::DataState;
                         },
@@ -1244,6 +1256,8 @@ impl<'a> Tokenizer<'a> {
                         },
                         Some('&') => _ = self.consume_character_reference(Some('>'), true),
                         Some('>') => {
+                            self.store_and_clear_current_attribute();
+                            self.add_stored_attributes_to_current_token();
                             emit_current_token!(self);
                             self.state = State::DataState;
                         },
@@ -1275,6 +1289,8 @@ impl<'a> Tokenizer<'a> {
                         Some(CHAR_SPACE) => self.state = State::BeforeAttributeNameState,
                         Some('\'') => self.state = State::SelfClosingStartState,
                         Some('>') => {
+                            self.store_and_clear_current_attribute();
+                            self.add_stored_attributes_to_current_token();
                             emit_current_token!(self);
                             self.state = State::DataState;
                         },
@@ -1342,7 +1358,7 @@ impl<'a> Tokenizer<'a> {
                         continue;
                     }
 
-                    if self.stream.look_ahead_slice(7) == "DOCTYPE" {
+                    if self.stream.look_ahead_slice(7).to_uppercase() == "DOCTYPE" {
                         self.stream.skip(7);
                         self.state = State::DocTypeState;
                         continue;
@@ -2164,22 +2180,9 @@ impl<'a> Tokenizer<'a> {
 
     // Creates a parser log error message
     pub(crate) fn parse_error(&mut self, error: ParserError) {
-        // Hack: when encountering eof, we need to have the previous position, not the current one.
+
+        // The previous position is where the error occurred
         let pos = self.stream.get_position(self.stream.position.offset - 1);
-        // if self.stream.eof() {
-        //     pos = self.stream.get_position(self.stream.position.offset);
-        // }
-        // match error {
-        //     ParserError::EofBeforeTagName |
-        //     ParserError::EofInCdata |
-        //     ParserError::EofInComment |
-        //     ParserError::EofInDoctype |
-        //     ParserError::EofInScriptHtmlCommentLikeText |
-        //     ParserError::EofInTag => {
-        //         pos = self.stream.get_position(self.stream.position.offset);
-        //     }
-        //     _ => {}
-        // }
 
         // Add to parse log
         self.errors.push(ParseError{
@@ -2247,6 +2250,36 @@ impl<'a> Tokenizer<'a> {
                 self.ignore_attribute = attributes.iter().any(|(name, ..)| name == &self.current_attr_name);
             },
             _ => {}
+        }
+    }
+
+    // Saves the current attribute name and value onto the current_attrs stack, if there is anything to store
+    fn store_and_clear_current_attribute(&mut self) {
+        if !self.current_attr_name.is_empty() {
+            self.current_attrs.push((self.current_attr_name.clone(), self.current_attr_value.clone()));
+        }
+
+        self.current_attr_name = String::new();
+        self.current_attr_value = String::new();
+    }
+
+    // This method will add current generated attributes to the current (start) token if needed.
+    fn add_stored_attributes_to_current_token(&mut self) {
+        if self.current_token.is_none() {
+            return;
+        }
+        if self.current_attrs.is_empty() {
+            return;
+        }
+
+        match self.current_token.as_mut().unwrap() {
+            Token::StartTagToken { attributes, .. } => {
+                for attr in &self.current_attrs {
+                    attributes.push(attr.clone());
+                }
+                self.current_attrs = vec![];
+            }
+            _ => {},
         }
     }
 }
