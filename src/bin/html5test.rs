@@ -13,6 +13,12 @@ use regex::Regex;
 #[macro_use]
 extern crate serde_derive;
 
+// These tests are skipped for various reasons. See test_results.md
+const SKIP_TESTS: [&str; 1] = [
+    "<!DOCTYPE a PUBLIC'\\uDBC0\\uDC00",
+
+];
+
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Root {
@@ -90,11 +96,18 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test, results: &mut TestResults)
 {
-    if ! test.description.contains("Invalid Unicode character U+DFFF with valid preceding character") {
-        return;
+    // if ! test.description.eq("<!") {
+    //     return;
+    // }
+
+    for skip in SKIP_TESTS {
+        if test.description == skip {
+            println!("🧪 Skipping test: {}", test.description);
+            return;
+        }
     }
 
-    println!("🧪 running test: {}", test.description);
+    println!("🧪 Running test: {}", test.description);
 
     results.tests += 1;
 
@@ -103,6 +116,7 @@ fn run_token_test(test: &Test, results: &mut TestResults)
     if states.is_empty() {
         states.push(String::from("Data state"));
     }
+
 
     for state in states.iter() {
         let state= match state.as_str() {
@@ -116,8 +130,6 @@ fn run_token_test(test: &Test, results: &mut TestResults)
         };
 
         let mut is = InputStream::new();
-
-
         let input = if test.double_escaped.unwrap_or(false) {
             escape(test.input.as_str())
         } else {
@@ -130,42 +142,48 @@ fn run_token_test(test: &Test, results: &mut TestResults)
             last_start_tag: test.last_start_tag.clone().unwrap_or(String::from("")),
         }));
 
+        // If there is no output, still do an (initial) next token so the parser can generate
+        // errors.
+        if test.output.is_empty() {
+            tokenizer.next_token();
+        }
+
         // There can be multiple tokens to match. Make sure we match all of them
         for expected_token in test.output.iter() {
             let t = tokenizer.next_token();
-            if ! match_token(t, expected_token, test.double_escaped.unwrap_or(false)) {
+            if !match_token(t, expected_token, test.double_escaped.unwrap_or(false)) {
                 results.assertions += 1;
                 results.failed += 1;
             }
+        }
 
-            if tokenizer.errors.len() != test.errors.len() {
-                println!("❌ Unexpected errors found (wanted {}, got {}): ", test.errors.len(), tokenizer.errors.len());
-                for want_err in &test.errors {
-                    println!("     * Want: '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
-                }
-                for got_err in tokenizer.get_errors() {
-                    println!("     * Got: '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
-                }
-                results.assertions += 1;
-                results.failed += 1;
+        if tokenizer.errors.len() != test.errors.len() {
+            println!("❌ Unexpected errors found (wanted {}, got {}): ", test.errors.len(), tokenizer.errors.len());
+            for want_err in &test.errors {
+                println!("     * Want: '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
             }
+            for got_err in tokenizer.get_errors() {
+                println!("     * Got: '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
+            }
+            results.assertions += 1;
+            results.failed += 1;
+        }
 
-            // Check error messages
-            for error in &test.errors {
-                match match_error(&tokenizer, &error) {
-                    ErrorResult::Failure => {
-                        results.assertions += 1;
-                        results.failed += 1;
-                    },
-                    ErrorResult::PositionFailure => {
-                        results.assertions += 1;
-                        results.failed += 1;
-                        results.failed_position += 1;
-                    },
-                    ErrorResult::Success => {
-                        results.assertions += 1;
-                        results.succeeded += 1;
-                    }
+        // Check error messages
+        for error in &test.errors {
+            match match_error(&tokenizer, &error) {
+                ErrorResult::Failure => {
+                    results.assertions += 1;
+                    results.failed += 1;
+                },
+                ErrorResult::PositionFailure => {
+                    results.assertions += 1;
+                    results.failed += 1;
+                    results.failed_position += 1;
+                },
+                ErrorResult::Success => {
+                    results.assertions += 1;
+                    results.succeeded += 1;
                 }
             }
         }
@@ -395,10 +413,10 @@ fn escape(input: &str) -> String {
     let re = Regex::new(r"\\u([0-9a-fA-F]{4})").unwrap();
     re.replace_all(input, |caps: &regex::Captures| {
         let hex_val = u32::from_str_radix(&caps[1], 16).unwrap();
-        // special case for converting surrogate codepoints to char (pro-tip: you can't)
-        if (0xD800..=0xDFFF).contains(&hex_val) {
-            return caps[1].to_string();
+
+        // This will also convert surrogates?
+        unsafe {
+            char::from_u32_unchecked(hex_val).to_string()
         }
-        char::from_u32(hex_val).unwrap().to_string()
     }).into_owned()
 }

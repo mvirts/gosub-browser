@@ -30,7 +30,7 @@ pub struct Position {
 #[derive(PartialEq, Debug, Copy, Clone)]
 pub enum Element {
     Utf8(char),             // Standard UTF character
-    Surrogate(u32),         // Surrogate character (since they cannot be stored in <char>)
+    Surrogate(u16),         // Surrogate character (since they cannot be stored in <char>)
     Eof,                    // End of stream
 }
 
@@ -59,7 +59,7 @@ impl Element {
     pub fn u32(&self) -> u32 {
         match self {
             Element::Utf8(c) => *c as u32,
-            Element::Surrogate(c) => *c,
+            Element::Surrogate(c) => *c as u32,
             Element::Eof => 0,
         }
     }
@@ -67,7 +67,7 @@ impl Element {
     pub fn utf8(&self) -> char {
         match self {
             Element::Utf8(c) => *c,
-            Element::Surrogate(c) => 0x0000 as char,
+            Element::Surrogate(..) => 0x0000 as char,
             Element::Eof => 0x0000 as char,
         }
     }
@@ -150,13 +150,16 @@ impl InputStream {
     }
 
     // Skip X characters
-    pub fn skip(&mut self, off: usize) { self.position = self.get_position(self.position.offset + off as i64); }
+    pub fn skip(&mut self, off: usize) {
+        self.position = self.get_position(self.position.offset + off as i64);
+    }
 
     // Retrieves position structure for given offset
     pub fn get_position(&mut self, mut seek_offset: i64) -> Position {
         // Cap to length
-        if seek_offset as usize > self.length  {
-            seek_offset = (self.length - 1) as i64;     // cast?
+        if (self.position.offset + seek_offset) as usize > self.length + 1  {
+            seek_offset = self.length as i64 - self.position.offset;     // cast?
+            self.has_read_eof = true;
         }
 
         // Detect lines (if needed)
@@ -205,16 +208,30 @@ impl InputStream {
     pub fn force_set_encoding(&mut self, e: Encoding) {
         match e {
             Encoding::UTF8 => {
-                // Convert the u8 buffer into utf8 string
-                let str_buf = std::str::from_utf8(&self.u8_buffer).unwrap();
-                let str_buf= str_buf.replace("\u{000D}\u{000A}", "\u{000A}");
-                let str_buf= str_buf.replace("\u{000D}", "\u{000A}");
+                let str_buf;
+                unsafe {
+                    str_buf = std::str::from_utf8_unchecked(&self.u8_buffer)
+                        .replace("\u{000D}\u{000A}", "\u{000A}")
+                        .replace("\u{000D}", "\u{000A}");
+                }
 
                 // Convert the utf8 string into characters so we can use easy indexing
                 self.buffer = vec![];
                 for c in str_buf.chars() {
-                    if c as u32 == 0xDFFF {
-                        self.buffer.push(Element::Surrogate(c as u32));
+
+                    // // Check if we have a non-bmp character. This means it's above 0x10000
+                    // let cp = c as u32;
+                    // if cp > 0x10000 && cp <= 0x10FFFF {
+                    //     let adjusted = cp - 0x10000;
+                    //     let lead = ((adjusted >> 10) & 0x3FF) as u16 + 0xD800;
+                    //     let trail = (adjusted & 0x3FF) as u16 + 0xDC00;
+                    //     self.buffer.push(Element::Surrogate(lead));
+                    //     self.buffer.push(Element::Surrogate(trail));
+                    //     continue;
+                    // }
+
+                    if (0xD800..=0xDFFF).contains(&(c as u32)) {
+                        self.buffer.push(Element::Surrogate(c as u16));
                     } else {
                         self.buffer.push(Element::Utf8(c));
                     }
