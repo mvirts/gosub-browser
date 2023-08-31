@@ -19,7 +19,6 @@ pub struct Root {
     pub tests: Vec<Test>,
 }
 
-
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Test {
@@ -91,7 +90,7 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test, results: &mut TestResults)
 {
-    if ! test.description.contains("CR in bogus comment state") {
+    if ! test.description.contains("Invalid Unicode character U+DFFF with valid preceding character") {
         return;
     }
 

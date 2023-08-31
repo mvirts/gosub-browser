@@ -27,6 +27,60 @@ pub struct Position {
     pub col: i64,
 }
 
+#[derive(PartialEq, Debug, Copy, Clone)]
+pub enum Element {
+    Utf8(char),             // Standard UTF character
+    Surrogate(u32),         // Surrogate character (since they cannot be stored in <char>)
+    Eof,                    // End of stream
+}
+
+impl Element {
+    pub fn is_eof(&self) -> bool {
+        match self {
+            Element::Eof => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_utf8(&self) -> bool {
+        match self {
+            Element::Utf8(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_surrogate(&self) -> bool {
+        match self {
+            Element::Surrogate(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn u32(&self) -> u32 {
+        match self {
+            Element::Utf8(c) => *c as u32,
+            Element::Surrogate(c) => *c,
+            Element::Eof => 0,
+        }
+    }
+
+    pub fn utf8(&self) -> char {
+        match self {
+            Element::Utf8(c) => *c,
+            Element::Surrogate(c) => 0x0000 as char,
+            Element::Eof => 0x0000 as char,
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            Element::Utf8(ch) => ch.to_string(),
+            Element::Surrogate(surrogate) => format!("U+{:04X}", surrogate), // Or some other representation
+            Element::Eof => "EOF".to_string(), // Or an empty string
+        }
+    }
+}
+
 // HTML(5) input stream structure
 pub struct InputStream {
     pub encoding: Encoding,             // Current encoding
@@ -36,7 +90,7 @@ pub struct InputStream {
     pub length: usize,                  // Length (in chars) of the buffer
     line_offsets: Vec<usize>,           // Offsets of the given lines
 
-    buffer: Vec<char>,                  // Reference to the actual buffer stream in characters
+    buffer: Vec<Element>,               // Reference to the actual buffer stream in characters
     u8_buffer: Vec<u8>,                 // Reference to the actual buffer stream in u8 bytes
                                         // If all things are ok, both buffer and u8_buffer should refer to the same memory location (?)
 
@@ -157,7 +211,14 @@ impl InputStream {
                 let str_buf= str_buf.replace("\u{000D}", "\u{000A}");
 
                 // Convert the utf8 string into characters so we can use easy indexing
-                self.buffer = str_buf.chars().collect();
+                self.buffer = vec![];
+                for c in str_buf.chars() {
+                    if c as u32 == 0xDFFF {
+                        self.buffer.push(Element::Surrogate(c as u32));
+                    } else {
+                        self.buffer.push(Element::Utf8(c));
+                    }
+                }
                 self.length = self.buffer.len();
             }
             Encoding::ASCII => {
@@ -170,7 +231,7 @@ impl InputStream {
         self.encoding = e;
     }
 
-    fn normalize_newlines_and_ascii(&self, buffer: &Vec<u8>) -> Vec<char> {
+    fn normalize_newlines_and_ascii(&self, buffer: &Vec<u8>) -> Vec<Element> {
         let mut result = Vec::with_capacity(buffer.len());
 
         for i in 0..buffer.len() {
@@ -179,13 +240,13 @@ impl InputStream {
                 if i + 1 < buffer.len() && buffer[i + 1] == CHAR_LF as u8 {
                     continue;
                 }
-                result.push(CHAR_LF);
+                result.push(Element::Utf8(CHAR_LF));
             } else if buffer[i] >= 0x80 {
                 // Convert high ascii to ?
-                result.push('?');
+                result.push(Element::Utf8('?'));
             } else {
                 // everything else is ok
-                result.push(buffer[i] as char)
+                result.push(Element::Utf8(buffer[i] as char))
             }
         }
 
@@ -218,17 +279,17 @@ impl InputStream {
     }
 
     // Reads a character and increases the current pointer, or read EOF as None
-    pub(crate) fn read_char(&mut self) -> Option<char> {
+    pub(crate) fn read_char(&mut self) -> Element {
         // Return none if we already have read EOF
         if self.has_read_eof {
-            return None;
+            return Element::Eof;
         }
 
         // If we still can move forward in the stream, move forwards
         if self.position.offset < (self.length as i64) {
             let c = self.buffer[self.position.offset as usize];
             self.position = self.get_position(self.position.offset + 1);
-            Some(c)
+            return c;
         } else {
             // otherwise, we have reached the end of the stream
             self.has_read_eof = true;
@@ -239,7 +300,8 @@ impl InputStream {
                 line: self.position.line,
                 col: self.position.col + 1,
             };
-            None
+
+            return Element::Eof;
         }
     }
 
@@ -265,23 +327,23 @@ impl InputStream {
         let end_pos = std::cmp::min(self.length, self.position.offset as usize + len);
 
         let slice = &self.buffer[self.position.offset as usize..end_pos];
-        slice.iter().collect()
+        slice.iter().map(|e| e.to_string()).collect()
     }
 
     // Looks ahead in the stream, can use an optional index if we want to seek further
     // (or back) in the stream.
-    pub(crate) fn look_ahead(&self, idx: i32) -> Option<char> {
+    pub(crate) fn look_ahead(&self, idx: i32) -> Element {
         // Trying to look after the stream
         if self.position.offset + idx as i64 > self.length as i64 {
-            return None;
+            return Element::Eof;
         }
 
         // Trying to look before the stream
         if self.position.offset + (idx as i64) < 0 {
-            return None;
+            return Element::Eof;
         }
 
-        Some(self.buffer[(self.position.offset + (idx as i64)) as usize])
+        self.buffer[(self.position.offset + (idx as i64)) as usize].clone()
     }
 
     // Populates the line endings
@@ -295,8 +357,8 @@ impl InputStream {
             }
 
             // Check the next char to see if it's a '\n'
-            let c = self.buffer[last_offset];
-            if c == '\n' {
+            let c = self.buffer[last_offset].clone();
+            if c == Element::Utf8('\n') {
                 self.line_offsets.push(last_offset + 1);
             }
 
