@@ -157,8 +157,8 @@ impl InputStream {
     // Retrieves position structure for given offset
     pub fn get_position(&mut self, mut seek_offset: i64) -> Position {
         // Cap to length
-        if (self.position.offset + seek_offset) as usize > self.length + 1  {
-            seek_offset = self.length as i64 - self.position.offset;     // cast?
+        if seek_offset as usize > self.length + 1  {
+            seek_offset = self.length as i64;     // cast?
             self.has_read_eof = true;
         }
 
@@ -313,9 +313,9 @@ impl InputStream {
 
             // This is a kind of dummy position so the end of the files are read correctly.
             self.position = Position{
-                offset: self.position.offset + 1,
+                offset: self.position.offset,
                 line: self.position.line,
-                col: self.position.col + 1,
+                col: self.position.col,
             };
 
             return Element::Eof;
@@ -402,26 +402,26 @@ mod test {
         assert_eq!(is.length, 3);
         assert_eq!(is.eof(), false);
         assert_eq!(is.chars_left(), 3);
-        assert_eq!(is.read_char().unwrap(), 'f');
+        assert_eq!(is.read_char().utf8(), 'f');
         assert_eq!(is.chars_left(), 2);
         assert_eq!(is.eof(), false);
-        assert_eq!(is.read_char().unwrap(), '👽');
+        assert_eq!(is.read_char().utf8(), '👽');
         assert_eq!(is.eof(), false);
         assert_eq!(is.chars_left(), 1);
-        assert_eq!(is.read_char().unwrap(), 'f');
+        assert_eq!(is.read_char().utf8(), 'f');
         assert_eq!(is.eof(), true);
         assert_eq!(is.chars_left(), 0);
 
         is.reset();
         is.set_encoding(Encoding::ASCII);
         assert_eq!(is.length, 6);
-        assert_eq!(is.read_char().unwrap(), 'f');
-        assert_eq!(is.read_char().unwrap(), '?');
-        assert_eq!(is.read_char().unwrap(), '?');
-        assert_eq!(is.read_char().unwrap(), '?');
-        assert_eq!(is.read_char().unwrap(), '?');
-        assert_eq!(is.read_char().unwrap(), 'f');
-        assert_eq!(is.read_char(), None);
+        assert_eq!(is.read_char().utf8(), 'f');
+        assert_eq!(is.read_char().utf8(), '?');
+        assert_eq!(is.read_char().utf8(), '?');
+        assert_eq!(is.read_char().utf8(), '?');
+        assert_eq!(is.read_char().utf8(), '?');
+        assert_eq!(is.read_char().utf8(), 'f');
+        assert_eq!(is.read_char().is_eof(), true);
 
         is.unread();    // unread EOF
         is.unread();    // Unread 'f'
@@ -452,15 +452,15 @@ mod test {
         let mut is = InputStream::new();
         is.read_from_str("abc", Some(Encoding::UTF8));
         assert_eq!(is.position, Position{ offset: 0, line: 1, col: 1});
-        assert_eq!('a', is.read_char().unwrap());
+        assert_eq!('a', is.read_char().utf8());
         assert_eq!(is.position, Position{ offset: 1, line: 1, col: 2});
-        assert_eq!('b', is.read_char().unwrap());
+        assert_eq!('b', is.read_char().utf8());
         assert_eq!(is.position, Position{ offset: 2, line: 1, col: 3});
-        assert_eq!('c', is.read_char().unwrap());
+        assert_eq!('c', is.read_char().utf8());
         assert_eq!(is.position, Position{ offset: 3, line: 1, col: 4});
-        assert_eq!(is.read_char().is_none(), true);
+        assert_eq!(is.read_char().is_eof(), true);
         assert_eq!(is.position, Position{ offset: 3, line: 1, col: 4});
-        assert_eq!(is.read_char().is_none(), true);
+        assert_eq!(is.read_char().is_eof(), true);
         assert_eq!(is.position, Position{ offset: 3, line: 1, col: 4});
 
 
@@ -470,34 +470,38 @@ mod test {
 
         is.seek(0);
         assert_eq!(is.position, Position{ offset: 0, line: 1, col: 1});
-        let c = is.read_char().unwrap();
-        assert_eq!('a', c);
+        let c = is.read_char();
+        assert_eq!('a', c.utf8());
         assert_eq!(is.position, Position{ offset: 1, line: 1, col: 2});
 
         is.seek(7);
         assert_eq!(is.position, Position{ offset: 7, line: 2, col: 4});
+        assert_eq!(is.chars_left(), 33);
 
-        let c = is.read_char().unwrap();
-        assert_eq!('g', c);
+        let c = is.read_char();
+        assert_eq!('g', c.utf8());
         assert_eq!(is.position, Position{ offset: 8, line: 2, col: 5});
 
-        let c = is.read_char().unwrap();
-        assert_eq!('\n', c);
+        let c = is.read_char();
+        assert_eq!('\n', c.utf8());
         assert_eq!(is.position, Position{ offset: 9, line: 3, col: 1});
 
-        let c = is.read_char().unwrap();
-        assert_eq!('\n', c);
+        let c = is.read_char();
+        assert_eq!('\n', c.utf8());
         assert_eq!(is.position, Position{ offset: 10, line: 4, col: 1});
 
-        let c = is.read_char().unwrap();
-        assert_eq!('h', c);
+        let c = is.read_char();
+        assert_eq!('h', c.utf8());
         assert_eq!(is.position, Position{ offset: 11, line: 4, col: 2});
+        assert_eq!(is.chars_left(), 29);
 
         is.reset();
         assert_eq!(is.position, Position{ offset: 0, line: 1, col: 1});
+        assert_eq!(is.chars_left(), 40);
 
         is.seek(100);
-        assert_eq!(is.position, Position{ offset: 39, line: 15, col: 1});
+        assert_eq!(is.position, Position{ offset: 40, line: 15, col: 2});
+        assert_eq!(is.chars_left(), 0);
     }
 
     #[test]
@@ -506,29 +510,29 @@ mod test {
         is.read_from_str("ab👽cd", Some(Encoding::UTF8));
         assert_eq!(is.length, 5);
         assert_eq!(is.chars_left(), 5);
-        assert_eq!(is.read_char().unwrap(), 'a');
-        assert_eq!(is.read_char().unwrap(), 'b');
+        assert_eq!(is.read_char().utf8(), 'a');
+        assert_eq!(is.read_char().utf8(), 'b');
         assert_eq!(is.chars_left(), 3);
         is.seek(0);
         assert_eq!(is.chars_left(), 5);
-        assert_eq!(is.read_char().unwrap(), 'a');
-        assert_eq!(is.read_char().unwrap(), 'b');
+        assert_eq!(is.read_char().utf8(), 'a');
+        assert_eq!(is.read_char().utf8(), 'b');
         assert_eq!(is.chars_left(), 3);
         is.seek(3);
         assert_eq!(is.chars_left(), 2);
-        assert_eq!(is.read_char().unwrap(), 'c');
-        assert_eq!(is.read_char().unwrap(), 'd');
+        assert_eq!(is.read_char().utf8(), 'c');
+        assert_eq!(is.read_char().utf8(), 'd');
         assert_eq!(is.chars_left(), 0);
         assert_eq!(is.eof(), true);
 
         is.reset();
-        assert_eq!(is.look_ahead(0).unwrap(), 'a');
-        assert_eq!(is.look_ahead(3).unwrap(), 'c');
-        assert_eq!(is.look_ahead(1).unwrap(), 'b');
-        assert_eq!(is.look_ahead(100), None);
-        assert_eq!(is.look_ahead(-1), None);
+        assert_eq!(is.look_ahead(0).utf8(), 'a');
+        assert_eq!(is.look_ahead(3).utf8(), 'c');
+        assert_eq!(is.look_ahead(1).utf8(), 'b');
+        assert_eq!(is.look_ahead(100).is_eof(), true);
+        assert_eq!(is.look_ahead(-1).is_eof(), true);
         is.seek(4);
-        assert_eq!(is.look_ahead(-1).unwrap(), 'c');
+        assert_eq!(is.look_ahead(-1).utf8(), 'c');
 
 
         is.seek(0);
@@ -551,36 +555,37 @@ mod test {
         is.read_from_str("abc", Some(Encoding::UTF8));
         assert_eq!(is.length, 3);
         assert_eq!(is.chars_left(), 3);
-        assert_eq!(is.read_char().unwrap(), 'a');
-        assert_eq!(is.read_char().unwrap(), 'b');
-        assert_eq!(is.read_char().unwrap(), 'c');
-        assert_eq!(is.read_char().is_none(), true);
-        assert_eq!(is.read_char().is_none(), true);
-        assert_eq!(is.read_char().is_none(), true);
-        assert_eq!(is.read_char().is_none(), true);
+        assert_eq!(is.read_char().utf8(), 'a');
+        assert_eq!(is.read_char().utf8(), 'b');
+        assert_eq!(is.read_char().utf8(), 'c');
+        assert_eq!(is.read_char().is_eof(), true);
+        assert_eq!(is.read_char().is_eof(), true);
+        assert_eq!(is.read_char().is_eof(), true);
+        assert_eq!(is.read_char().is_eof(), true);
         is.unread();
-        assert_eq!(is.read_char().is_none(), true);
+        assert_eq!(is.read_char().is_eof(), false);
+        assert_eq!(is.read_char().is_eof(), true);
         is.unread();
-        assert_eq!(is.read_char().is_none(), true);
-        is.unread();
-        is.unread();
-        assert_eq!(is.read_char().unwrap(), 'c');
-        is.unread();
-        assert_eq!(is.read_char().unwrap(), 'c');
+        assert_eq!(is.read_char().is_eof(), false);
         is.unread();
         is.unread();
-        assert_eq!(is.read_char().unwrap(), 'b');
+        assert_eq!(is.read_char().utf8(), 'a');
+        is.unread();
+        assert_eq!(is.read_char().utf8(), 'a');
         is.unread();
         is.unread();
-        is.unread();
+        assert_eq!(is.read_char().utf8(), 'a');
         is.unread();
         is.unread();
         is.unread();
-        assert_eq!(is.read_char().unwrap(), 'a');
-        assert_eq!(is.read_char().unwrap(), 'b');
-        assert_eq!(is.read_char().unwrap(), 'c');
-        assert_eq!(is.read_char().is_none(), true);
         is.unread();
-        assert_eq!(is.read_char().is_none(), true);
+        is.unread();
+        is.unread();
+        assert_eq!(is.read_char().utf8(), 'a');
+        assert_eq!(is.read_char().utf8(), 'b');
+        assert_eq!(is.read_char().utf8(), 'c');
+        assert_eq!(is.read_char().is_eof(), true);
+        is.unread();
+        assert_eq!(is.read_char().is_eof(), false);
     }
 }

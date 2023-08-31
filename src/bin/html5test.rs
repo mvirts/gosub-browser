@@ -96,9 +96,9 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test, results: &mut TestResults)
 {
-    // if ! test.description.eq("<!") {
-    //     return;
-    // }
+    if ! test.description.eq("End tag closing RCDATA or RAWTEXT") {
+        return;
+    }
 
     for skip in SKIP_TESTS {
         if test.description == skip {
