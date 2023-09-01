@@ -20,11 +20,11 @@ pub enum Confidence {
                // Irrelevant          // There is no content encoding for this stream
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Copy, Clone)]
 pub struct Position {
-    pub offset: i64,
-    pub line: i64,
-    pub col: i64,
+    pub offset: usize,
+    pub line: usize,
+    pub col: usize,
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]
@@ -97,6 +97,12 @@ pub struct InputStream {
     pub has_read_eof: bool,             // True when we just read an EOF
 }
 
+pub enum SeekMode {
+    SeekSet,       // Seek from the start of the stream
+    SeekCur,       // Seek from the current stream position
+    SeekEnd,       // Seek (backwards) from the end of the stream
+}
+
 impl InputStream {
     // Create a new default empty input stream
     pub fn new() -> Self {
@@ -128,12 +134,6 @@ impl InputStream {
 
     // Returns true when the stream pointer is at the end of the stream
     pub fn eof(&self) -> bool {
-        // Nothing has been read yet.
-        // if self.position.offset == -1 {
-        //     // If it's empty, we are always EOF, even when nothing is read
-        //     return self.length == 0;
-        // }
-
         self.has_read_eof || self.position.offset as usize >= self.length
     }
 
@@ -145,30 +145,62 @@ impl InputStream {
     }
 
     // Seek explicit offset in the stream (based on chars)
-    pub fn seek(&mut self, off: i64) {
-        self.position = self.get_position(off);
+    pub fn seek(&mut self, mode: SeekMode, offset: isize) {
+        let abs_offset = match mode {
+            SeekMode::SeekSet => {
+                if offset.is_negative() {
+                    0
+                } else {
+                    offset as usize
+                }
+            }
+            SeekMode::SeekCur => {
+                if offset.is_negative() {
+                    self.position.offset - offset.abs() as usize
+                } else {
+                    self.position.offset + offset as usize
+                }
+            }
+            SeekMode::SeekEnd => {
+                // Both -5 and 5 on seek-end do the same thing
+                if offset.abs() > self.length as isize {
+                    0
+                } else {
+                    self.length - offset.abs() as usize
+                }
+            }
+        };
+
+        self.position = self.generate_position(abs_offset);
     }
 
-    // Skip X characters
-    pub fn skip(&mut self, off: usize) {
-        self.position = self.get_position(self.position.offset + off as i64);
+    pub fn get_previous_position(&mut self) -> Position {
+
+        // if we are at the begining or the end of the stream, we just return the current position
+        if self.position.offset == 0 || self.has_read_eof {
+            return self.position;
+        }
+
+        self.generate_position(self.position.offset - 1)
     }
 
-    // Retrieves position structure for given offset
-    pub fn get_position(&mut self, mut seek_offset: i64) -> Position {
-        // Cap to length
-        if seek_offset as usize > self.length + 1  {
-            seek_offset = self.length as i64;     // cast?
+    // Generate a new position structure for given offset
+    fn generate_position(&mut self, abs_offset: usize) -> Position {
+        let mut abs_offset = abs_offset;
+
+        // Cap to length if we read past the end of the stream
+        if abs_offset > self.length + 1  {
+            abs_offset = self.length;
             self.has_read_eof = true;
         }
 
         // Detect lines (if needed)
-        self.read_line_endings_until(seek_offset);
+        self.read_line_endings_until(abs_offset);
 
         let mut last_line: usize = 0;
         let mut last_offset = self.line_offsets[last_line];
         for i in 0..self.line_offsets.len() {
-            if self.line_offsets[i] > seek_offset as usize {
+            if self.line_offsets[i] > abs_offset as usize {
                 break;
             }
 
@@ -178,9 +210,9 @@ impl InputStream {
 
         // Set position values
         return Position{
-            offset: seek_offset,
-            line: (last_line + 1) as i64,
-            col: seek_offset - last_offset as i64 + 1,
+            offset: abs_offset,
+            line: last_line + 1,
+            col: abs_offset - last_offset + 1,
         }
     }
 
@@ -288,11 +320,7 @@ impl InputStream {
 
     // Returns the number of characters left in the buffer
     pub(crate) fn chars_left(&self) -> usize {
-        if self.position.offset < 0 {
-            return self.length;
-        }
-
-        self.length - self.position.offset as usize
+        self.length - self.position.offset
     }
 
     // Reads a character and increases the current pointer, or read EOF as None
@@ -303,20 +331,22 @@ impl InputStream {
         }
 
         // If we still can move forward in the stream, move forwards
-        if self.position.offset < (self.length as i64) {
-            let c = self.buffer[self.position.offset as usize];
-            self.position = self.get_position(self.position.offset + 1);
+        if self.position.offset < self.length {
+            let c = self.buffer[self.position.offset].clone();
+            self.seek(SeekMode::SeekCur, 1);
             return c;
         } else {
             // otherwise, we have reached the end of the stream
             self.has_read_eof = true;
 
-            // This is a kind of dummy position so the end of the files are read correctly.
-            self.position = Position{
-                offset: self.position.offset,
-                line: self.position.line,
-                col: self.position.col,
-            };
+            self.seek(SeekMode::SeekEnd, 0);
+
+            // // This is a kind of dummy position so the end of the files are read correctly.
+            // self.position = Position{
+            //     offset: self.position.offset,
+            //     line: self.position.line,
+            //     col: self.position.col,
+            // };
 
             return Element::Eof;
         }
@@ -326,22 +356,18 @@ impl InputStream {
         // We already read eof, so "unread" the eof by unsetting the flag
         if self.has_read_eof {
             self.has_read_eof = false;
-            self.position = self.get_position(self.position.offset - 1);
             return;
         }
 
         // If we can track back from the offset, we can do so
         if self.position.offset > 0 {
-            self.position = self.get_position(self.position.offset - 1);
-        // } else {
-        //     // otherwise, we reset to nothing read (offset = -1)
-        //     self.reset();
+            self.seek(SeekMode::SeekCur, -1);
         }
     }
 
     // Looks ahead in the stream and returns len characters
     pub(crate) fn look_ahead_slice(&self, len: usize) -> String {
-        let end_pos = std::cmp::min(self.length, self.position.offset as usize + len);
+        let end_pos = std::cmp::min(self.length, self.position.offset + len);
 
         let slice = &self.buffer[self.position.offset as usize..end_pos];
         slice.iter().map(|e| e.to_string()).collect()
@@ -349,25 +375,20 @@ impl InputStream {
 
     // Looks ahead in the stream, can use an optional index if we want to seek further
     // (or back) in the stream.
-    pub(crate) fn look_ahead(&self, idx: i32) -> Element {
+    pub(crate) fn look_ahead(&self, offset: usize) -> Element {
         // Trying to look after the stream
-        if self.position.offset + idx as i64 > self.length as i64 {
+        if self.position.offset + offset > self.length {
             return Element::Eof;
         }
 
-        // Trying to look before the stream
-        if self.position.offset + (idx as i64) < 0 {
-            return Element::Eof;
-        }
-
-        self.buffer[(self.position.offset + (idx as i64)) as usize].clone()
+        self.buffer[self.position.offset + offset]
     }
 
     // Populates the line endings
-    fn read_line_endings_until(&mut self, seek_offset: i64) {
+    fn read_line_endings_until(&mut self, abs_offset: usize) {
         let mut last_offset = *self.line_offsets.last().unwrap();
 
-        while last_offset <= seek_offset as usize {
+        while last_offset <= abs_offset as usize {
             if last_offset >= self.length {
                 self.line_offsets.push(last_offset + 1);
                 break;
@@ -423,16 +444,33 @@ mod test {
         assert_eq!(is.read_char().utf8(), 'f');
         assert_eq!(is.read_char().is_eof(), true);
 
-        is.unread();    // unread EOF
-        is.unread();    // Unread 'f'
-        assert_eq!(is.chars_left(), 1);
-        is.unread();
+        is.unread();    // unread eof
+        is.unread();    // unread 'f'
+        is.unread();    // Unread '?'
         assert_eq!(is.chars_left(), 2);
+        is.unread();
+        assert_eq!(is.chars_left(), 3);
 
         is.reset();
         assert_eq!(is.chars_left(), 6);
         is.unread();
         assert_eq!(is.chars_left(), 6);
+
+
+        is.read_from_str("abc", Some(Encoding::UTF8));
+        is.reset();
+        assert_eq!(is.read_char().utf8(), 'a');
+        is.unread();
+        assert_eq!(is.read_char().utf8(), 'a');
+        assert_eq!(is.read_char().utf8(), 'b');
+        is.unread();
+        assert_eq!(is.read_char().utf8(), 'b');
+        assert_eq!(is.read_char().utf8(), 'c');
+        is.unread();
+        assert_eq!(is.read_char().utf8(), 'c');
+        assert_eq!(is.read_char().is_eof(), true);
+        is.unread();
+        assert_eq!(is.read_char().is_eof(), true);
     }
 
     #[test]
@@ -468,13 +506,13 @@ mod test {
         is.read_from_str("abc\ndefg\n\nhi\njk\nlmno\n\n\npqrst\nu\nv\nw\n\nxy\nz", Some(Encoding::UTF8));
         assert_eq!(is.length, 40);
 
-        is.seek(0);
+        is.seek(SeekMode::SeekSet, 0);
         assert_eq!(is.position, Position{ offset: 0, line: 1, col: 1});
         let c = is.read_char();
         assert_eq!('a', c.utf8());
         assert_eq!(is.position, Position{ offset: 1, line: 1, col: 2});
 
-        is.seek(7);
+        is.seek(SeekMode::SeekSet, 7);
         assert_eq!(is.position, Position{ offset: 7, line: 2, col: 4});
         assert_eq!(is.chars_left(), 33);
 
@@ -499,7 +537,7 @@ mod test {
         assert_eq!(is.position, Position{ offset: 0, line: 1, col: 1});
         assert_eq!(is.chars_left(), 40);
 
-        is.seek(100);
+        is.seek(SeekMode::SeekSet, 100);
         assert_eq!(is.position, Position{ offset: 40, line: 15, col: 2});
         assert_eq!(is.chars_left(), 0);
     }
@@ -513,12 +551,12 @@ mod test {
         assert_eq!(is.read_char().utf8(), 'a');
         assert_eq!(is.read_char().utf8(), 'b');
         assert_eq!(is.chars_left(), 3);
-        is.seek(0);
+        is.seek(SeekMode::SeekSet, 0);
         assert_eq!(is.chars_left(), 5);
         assert_eq!(is.read_char().utf8(), 'a');
         assert_eq!(is.read_char().utf8(), 'b');
         assert_eq!(is.chars_left(), 3);
-        is.seek(3);
+        is.seek(SeekMode::SeekSet, 3);
         assert_eq!(is.chars_left(), 2);
         assert_eq!(is.read_char().utf8(), 'c');
         assert_eq!(is.read_char().utf8(), 'd');
@@ -530,12 +568,8 @@ mod test {
         assert_eq!(is.look_ahead(3).utf8(), 'c');
         assert_eq!(is.look_ahead(1).utf8(), 'b');
         assert_eq!(is.look_ahead(100).is_eof(), true);
-        assert_eq!(is.look_ahead(-1).is_eof(), true);
-        is.seek(4);
-        assert_eq!(is.look_ahead(-1).utf8(), 'c');
 
-
-        is.seek(0);
+        is.seek(SeekMode::SeekSet, 0);
         assert_eq!(is.look_ahead_slice(1), "a");
         assert_eq!(is.look_ahead_slice(2), "ab");
         assert_eq!(is.look_ahead_slice(3), "ab👽");
@@ -544,9 +578,37 @@ mod test {
         assert_eq!(is.look_ahead_slice(6), "ab👽cd");
         assert_eq!(is.look_ahead_slice(100), "ab👽cd");
 
-        is.seek(3);
+        is.seek(SeekMode::SeekSet, 3);
         assert_eq!(is.look_ahead_slice(1), "c");
         assert_eq!(is.look_ahead_slice(2), "cd");
+
+
+        is.seek(SeekMode::SeekSet, 0);
+        assert_eq!(is.position.offset, 0);
+
+        is.seek(SeekMode::SeekSet, 3);
+        assert_eq!(is.position.offset, 3);
+
+        is.seek(SeekMode::SeekCur, 0);
+        assert_eq!(is.position.offset, 3);
+
+        is.seek(SeekMode::SeekCur, 1);
+        assert_eq!(is.position.offset, 4);
+
+        is.seek(SeekMode::SeekCur, -2);
+        assert_eq!(is.position.offset, 2);
+
+        is.seek(SeekMode::SeekCur, 10);
+        assert_eq!(is.position.offset, 5);
+
+        is.seek(SeekMode::SeekSet, 100);
+        assert_eq!(is.position.offset, 5);
+
+        is.seek(SeekMode::SeekSet, -100);
+        assert_eq!(is.position.offset, 0);
+
+        is.seek(SeekMode::SeekEnd, -100);
+        assert_eq!(is.position.offset, 0);
     }
 
     #[test]
@@ -563,10 +625,15 @@ mod test {
         assert_eq!(is.read_char().is_eof(), true);
         assert_eq!(is.read_char().is_eof(), true);
         is.unread();
+        assert_eq!(is.read_char().is_eof(), true);
+        is.unread();
+        is.unread();
         assert_eq!(is.read_char().is_eof(), false);
         assert_eq!(is.read_char().is_eof(), true);
         is.unread();
+        is.unread();
         assert_eq!(is.read_char().is_eof(), false);
+        is.unread();
         is.unread();
         is.unread();
         assert_eq!(is.read_char().utf8(), 'a');
@@ -586,6 +653,10 @@ mod test {
         assert_eq!(is.read_char().utf8(), 'c');
         assert_eq!(is.read_char().is_eof(), true);
         is.unread();
-        assert_eq!(is.read_char().is_eof(), false);
+        is.unread();
+        assert_eq!(is.read_char().utf8(), 'c');
+        assert_eq!(is.read_char().is_eof(), true);
+        is.unread();
+        assert_eq!(is.read_char().is_eof(), true);
     }
 }

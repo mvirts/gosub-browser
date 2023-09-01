@@ -96,7 +96,11 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test, results: &mut TestResults)
 {
-    if ! test.description.eq("End tag closing RCDATA or RAWTEXT") {
+    // <!DOCTYPE a \u0000
+    // <!DOCTYPE a PUBLIC\u0000
+    // <!DOCTYPE a PUBLIC\u0008
+
+    if ! test.description.eq("Permitted slash but in close tag") {
         return;
     }
 
@@ -203,7 +207,7 @@ fn match_error(tokenizer: &Tokenizer, expected_err: &Error) -> ErrorResult {
 
     // Iterate all generated errors to see if we have an exact match
     for got_err in tokenizer.get_errors() {
-        if got_err.message == expected_err.code && got_err.line == expected_err.line && got_err.col == expected_err.col {
+        if got_err.message == expected_err.code && got_err.line as i64 == expected_err.line && got_err.col as i64 == expected_err.col {
             // Found an exact match
             println!("✅ Found parse error '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
 
@@ -216,7 +220,7 @@ fn match_error(tokenizer: &Tokenizer, expected_err: &Error) -> ErrorResult {
     let mut result = ErrorResult::Failure;
     for got_err in tokenizer.get_errors() {
         if got_err.message == expected_err.code {
-            if got_err.line != expected_err.line || got_err.col != expected_err.col {
+            if got_err.line as i64 != expected_err.line || got_err.col as i64 != expected_err.col {
                 // println!("❌ Expected error '{}' at {}:{}", expected_err.code, expected_err.line, expected_err.col);
                 result = ErrorResult::PositionFailure;
                 break;
@@ -387,6 +391,10 @@ fn check_match_doctype(
 
     if expected_name.is_none() && ! name.is_none() {
         println!("❌ Incorrect doctype (no name expected, but got '{}')", name.unwrap());
+        return Err(());
+    }
+    if expected_name.is_some() && name.is_none() {
+        println!("❌ Incorrect doctype (name expected, but got none)");
         return Err(());
     }
     if expected_name.is_some() && expected_name != Some(name.clone().unwrap().as_str()) {

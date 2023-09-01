@@ -1,5 +1,6 @@
 use crate::html5_parser::input_stream::InputStream;
 use crate::html5_parser::input_stream::Element;
+use crate::html5_parser::input_stream::SeekMode::SeekCur;
 use crate::html5_parser::parse_errors::ParserError;
 use crate::html5_parser::token::Token;
 use crate::html5_parser::token_states::State;
@@ -194,9 +195,9 @@ macro_rules! emit_token {
 #[derive(PartialEq)]
 pub struct ParseError {
     pub message: String,  // Parse message
-    pub line: i64,        // Line number of the error
-    pub col: i64,         // Offset on line of the error
-    pub offset: i64,      // Position of the error on the line
+    pub line: usize,        // Line number of the error
+    pub col: usize,         // Offset on line of the error
+    pub offset: usize,      // Position of the error on the line
 }
 
 impl<'a> Tokenizer<'a> {
@@ -328,8 +329,8 @@ impl<'a> Tokenizer<'a> {
                     let c = read_char!(self);
                     match c {
                         Element::Utf8(CHAR_NUL) => {
-                            self.consume(CHAR_REPLACEMENT);
                             self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.consume(CHAR_REPLACEMENT);
                         },
                         Element::Eof => {
                             if self.has_consumed_data() {
@@ -381,8 +382,8 @@ impl<'a> Tokenizer<'a> {
                         },
                         _ => {
                             self.parse_error(ParserError::InvalidFirstCharacterOfTagName);
-                            self.consume('<');
                             self.stream.unread();
+                            self.consume('<');
                             self.state = State::DataState;
                         }
                     }
@@ -441,8 +442,8 @@ impl<'a> Tokenizer<'a> {
                         },
                         Element::Utf8(ch @ 'A'..='Z') => add_to_token_name!(self, to_lowercase!(ch)),
                         Element::Utf8(CHAR_NUL) => {
-                            add_to_token_name!(self, CHAR_REPLACEMENT);
                             self.parse_error(ParserError::UnexpectedNullCharacter);
+                            add_to_token_name!(self, CHAR_REPLACEMENT);
                         },
                         Element::Eof => {
                             self.parse_error(ParserError::EofInTag);
@@ -1145,8 +1146,8 @@ impl<'a> Tokenizer<'a> {
                             if self.attr_already_exists() {
                                 self.parse_error(ParserError::DuplicateAttribute);
                             }
-
                             self.stream.unread();
+
                             self.state = State::AfterAttributeNameState
                         },
                         Element::Utf8('=') => {
@@ -1159,8 +1160,8 @@ impl<'a> Tokenizer<'a> {
                             self.current_attr_name.push(to_lowercase!(ch));
                         },
                         Element::Utf8(CHAR_NUL)  => {
-                            self.current_attr_name.push(CHAR_REPLACEMENT);
                             self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.current_attr_name.push(CHAR_REPLACEMENT);
                         },
                         Element::Utf8('"') | Element::Utf8('\'') | Element::Utf8('<') => {
                             self.parse_error(ParserError::UnexpectedCharacterInAttributeName);
@@ -1233,8 +1234,8 @@ impl<'a> Tokenizer<'a> {
                         Element::Utf8('"') => self.state = State::AfterAttributeValueQuotedState,
                         Element::Utf8('&') => _ = self.consume_character_reference(Some(Element::Utf8('"')), true),
                         Element::Utf8(CHAR_NUL) => {
-                            self.current_attr_value.push(CHAR_REPLACEMENT);
                             self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.current_attr_value.push(CHAR_REPLACEMENT);
                         },
                         Element::Eof => {
                             self.parse_error(ParserError::EofInTag);
@@ -1251,8 +1252,8 @@ impl<'a> Tokenizer<'a> {
                         Element::Utf8('\'') => self.state = State::AfterAttributeValueQuotedState,
                         Element::Utf8('&') => _ = self.consume_character_reference(Some(Element::Utf8('\'')), true),
                         Element::Utf8(CHAR_NUL) => {
-                            self.current_attr_value.push(CHAR_REPLACEMENT);
                             self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.current_attr_value.push(CHAR_REPLACEMENT);
                         },
                         Element::Eof => {
                             self.parse_error(ParserError::EofInTag);
@@ -1280,8 +1281,8 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::DataState;
                         },
                         Element::Utf8(CHAR_NUL) => {
-                            self.current_attr_value.push(CHAR_REPLACEMENT);
                             self.parse_error(ParserError::UnexpectedNullCharacter);
+                            self.current_attr_value.push(CHAR_REPLACEMENT);
                         },
                         Element::Utf8('"') | Element::Utf8('\'') | Element::Utf8('<') | Element::Utf8('=') | Element::Utf8('`') => {
                             self.parse_error(ParserError::UnexpectedCharacterInUnquotedAttributeValue);
@@ -1356,8 +1357,8 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::DataState;
                         },
                         Element::Utf8(CHAR_NUL) => {
-                            add_to_token_value!(self, CHAR_REPLACEMENT);
                             self.parse_error(ParserError::UnexpectedNullCharacter);
+                            add_to_token_value!(self, CHAR_REPLACEMENT);
                         }
                         _ => {
                             add_to_token_value!(self, c.utf8());
@@ -1371,20 +1372,20 @@ impl<'a> Tokenizer<'a> {
                         });
 
                         // Skip the two -- signs
-                        self.stream.skip(2);
+                        self.stream.seek(SeekCur, 2);
 
                         self.state = State::CommentStartState;
                         continue;
                     }
 
                     if self.stream.look_ahead_slice(7).to_uppercase() == "DOCTYPE" {
-                        self.stream.skip(7);
+                        self.stream.seek(SeekCur, 7);
                         self.state = State::DocTypeState;
                         continue;
                     }
 
                     if self.stream.look_ahead_slice(7) == "[CDATA[" {
-                        self.stream.skip(7);
+                        self.stream.seek(SeekCur, 7);
 
                         // @TODO: If there is an adjusted current node and it is not an element in the HTML namespace,
                         // then switch to the CDATA section state. Otherwise, this is a cdata-in-html-content parse error.
@@ -1398,7 +1399,7 @@ impl<'a> Tokenizer<'a> {
                         continue;
                     }
 
-                    self.stream.skip(1);
+                    self.stream.seek(SeekCur, 1);
                     self.parse_error(ParserError::IncorrectlyOpenedComment);
                     self.stream.unread();
                     self.current_token = Some(Token::CommentToken{
@@ -1436,7 +1437,7 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::DataState;
                         }
                         Element::Eof => {
-                            self.parse_error(ParserError::EofInTag);
+                            self.parse_error(ParserError::EofInComment);
                             emit_current_token!(self);
                             self.state = State::DataState;
                         },
@@ -1738,19 +1739,20 @@ impl<'a> Tokenizer<'a> {
                         _ => {
                             self.stream.unread();
                             if self.stream.look_ahead_slice(6).to_uppercase() == "PUBLIC" {
-                                self.stream.skip(6);
+                                self.stream.seek(SeekCur, 6);
                                 self.state = State::AfterDocTypePublicKeywordState;
                                 continue;
                             }
                             if self.stream.look_ahead_slice(6).to_uppercase() == "SYSTEM" {
-                                self.stream.skip(6);
+                                self.stream.seek(SeekCur, 6);
                                 self.state = State::AfterDocTypeSystemKeywordState;
                                 continue;
                             }
                             // Make sure the parser is on the correct position again since we just
                             // unread the character
-                            self.stream.skip(1);
+                            self.stream.seek(SeekCur, 1);
                             self.parse_error(ParserError::InvalidCharacterSequenceAfterDoctypeName);
+                            self.stream.seek(SeekCur, -1);
                             self.set_quirks_mode(true);
                             self.state = State::BogusDocTypeState;
                         }
@@ -1787,8 +1789,8 @@ impl<'a> Tokenizer<'a> {
                         }
                         _ => {
                             self.parse_error(ParserError::MissingQuoteBeforeDoctypePublicIdentifier);
-                            self.set_quirks_mode(true);
                             self.stream.unread();
+                            self.set_quirks_mode(true);
                             self.state = State::BogusDocTypeState;
                         }
                     }
@@ -1823,9 +1825,9 @@ impl<'a> Tokenizer<'a> {
                             self.state = State::DataState;
                         }
                         _ => {
+                            self.stream.unread();
                             self.parse_error(ParserError::MissingQuoteBeforeDoctypePublicIdentifier);
                             self.set_quirks_mode(true);
-                            self.stream.unread();
                             self.state = State::BogusDocTypeState;
                         }
                     }
@@ -1905,8 +1907,8 @@ impl<'a> Tokenizer<'a> {
                         }
                         _ => {
                             self.parse_error(ParserError::MissingQuoteBeforeDoctypeSystemIdentifier);
-                            self.set_quirks_mode(true);
                             self.stream.unread();
+                            self.set_quirks_mode(true);
                             self.state = State::BogusDocTypeState;
                         }
                     }
@@ -1940,8 +1942,8 @@ impl<'a> Tokenizer<'a> {
                         }
                         _ => {
                             self.parse_error(ParserError::MissingQuoteBeforeDoctypeSystemIdentifier);
-                            self.set_quirks_mode(true);
                             self.stream.unread();
+                            self.set_quirks_mode(true);
                             self.state = State::BogusDocTypeState;
                         }
                     }
@@ -1977,8 +1979,8 @@ impl<'a> Tokenizer<'a> {
                         }
                         _ => {
                             self.parse_error(ParserError::MissingQuoteBeforeDoctypeSystemIdentifier);
-                            self.set_quirks_mode(true);
                             self.stream.unread();
+                            self.set_quirks_mode(true);
                             self.state = State::BogusDocTypeState;
                         }
                     }
@@ -2014,8 +2016,8 @@ impl<'a> Tokenizer<'a> {
                         }
                         _ => {
                             self.parse_error(ParserError::MissingQuoteBeforeDoctypeSystemIdentifier);
-                            self.set_quirks_mode(true);
                             self.stream.unread();
+                            self.set_quirks_mode(true);
                             self.state = State::BogusDocTypeState;
                         }
                     }
@@ -2201,7 +2203,7 @@ impl<'a> Tokenizer<'a> {
     pub(crate) fn parse_error(&mut self, error: ParserError) {
 
         // The previous position is where the error occurred
-        let pos = self.stream.get_position(self.stream.position.offset - 1);
+        let pos = self.stream.get_previous_position();
 
         let mut already_exists= false;
         for err in &self.errors {
@@ -2212,6 +2214,7 @@ impl<'a> Tokenizer<'a> {
 
         // Don't add when this error already exists (for this exact position)
         if already_exists {
+            // self.stream.seek(SeekCur, 1);
             return
         }
 
@@ -2222,6 +2225,8 @@ impl<'a> Tokenizer<'a> {
             col: pos.col,
             offset: pos.offset,
         });
+
+        // self.stream.seek(SeekCur, 1);
     }
 
     // Set is_closing_tag in current token

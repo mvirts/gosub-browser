@@ -7,6 +7,7 @@ use crate::read_char;
 
 extern crate lazy_static;
 use lazy_static::lazy_static;
+use crate::html5_parser::input_stream::SeekMode::SeekCur;
 
 use super::tokenizer::CHAR_REPLACEMENT;
 
@@ -90,7 +91,7 @@ impl<'a> Tokenizer<'a> {
                             return;
                         }
 
-                        self.stream.skip(entity.len());
+                        self.stream.seek(SeekCur, entity.len() as isize);
 
                         let entity_chars = *TOKEN_NAMED_CHARS.get(entity.as_str()).unwrap();
 
