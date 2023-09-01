@@ -35,6 +35,24 @@ pub enum Token {
     EofToken,
 }
 
+impl Token {
+    pub fn is_eof(&self) -> bool {
+        if let Token::EofToken = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_empty_or_white(&self) -> bool {
+        if let Token::TextToken { value } = self {
+            value.trim().is_empty()
+        } else {
+            false
+        }
+    }
+}
+
 // Each token can be displayed as a string
 impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -45,7 +63,7 @@ impl std::fmt::Display for Token {
                 pub_identifier,
                 sys_identifier,
             } => {
-                let mut result = format!("<!DOCTYPE {:?}", name);
+                let mut result = format!("<!DOCTYPE {}", name.clone().unwrap_or("".to_string()));
                 if *force_quirks {
                     result.push_str(" FORCE_QUIRKS!");
                 }
@@ -58,8 +76,8 @@ impl std::fmt::Display for Token {
                 result.push_str(" />");
                 write!(f, "{}", result)
             }
-            Token::CommentToken { value } => write!(f, "<!-- {} -->", value),
-            Token::TextToken { value } => write!(f, "{}", value),
+            Token::CommentToken { value } => write!(f, "Comment[<!-- {} -->]", value),
+            Token::TextToken { value } => write!(f, "Text[{}]", value),
             Token::StartTagToken {
                 name,
                 is_self_closing,
@@ -73,9 +91,9 @@ impl std::fmt::Display for Token {
                     result.push_str(" /");
                 }
                 result.push('>');
-                write!(f, "{}", result)
+                write!(f, "StartTag[{}]", result)
             }
-            Token::EndTagToken { name } => write!(f, "</{}>", name),
+            Token::EndTagToken { name } => write!(f, "EndTag[</{}>]", name),
             Token::EofToken => write!(f, "EOF"),
         }
     }

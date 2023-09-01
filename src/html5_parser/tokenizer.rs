@@ -1,4 +1,4 @@
-use crate::html5_parser::input_stream::InputStream;
+use crate::html5_parser::input_stream::{InputStream, Position};
 use crate::html5_parser::input_stream::Element;
 use crate::html5_parser::input_stream::SeekMode::SeekCur;
 use crate::html5_parser::parse_errors::ParserError;
@@ -27,6 +27,12 @@ pub struct Tokenizer<'a> {
     pub token_queue: Vec<Token>,        // Queue of emitted tokens. Needed because we can generate multiple tokens during iteration
     pub errors: Vec<ParseError>,        // Parse errors (if any)
     pub last_start_token: String,       // The last emitted start token (or empty if none)
+}
+
+impl<'a> Tokenizer<'a> {
+    pub(crate) fn get_position(&self) -> Position {
+        return self.stream.position;
+    }
 }
 
 pub struct Options {
@@ -80,6 +86,7 @@ macro_rules! set_public_identifier {
         }
     }
 }
+
 macro_rules! add_public_identifier {
     ($self:expr, $c:expr) => {
         match &mut $self.current_token {
@@ -169,15 +176,6 @@ macro_rules! emit_token {
             },
             _ => {}
         }
-
-        // match $token {
-        //     Token::EndTagToken { .. } => {
-        //         if !$self.current_attrs.is_empty() {
-        //             $self.parse_error(ParserError::EndTagWithAttributes);
-        //         }
-        //     }
-        //     _ => {}
-        // }
 
         // If there is any consumed data, emit this first as a text token
         if $self.has_consumed_data() {
@@ -2212,7 +2210,6 @@ impl<'a> Tokenizer<'a> {
 
         // Don't add when this error already exists (for this exact position)
         if already_exists {
-            // self.stream.seek(SeekCur, 1);
             return
         }
 
@@ -2223,8 +2220,6 @@ impl<'a> Tokenizer<'a> {
             col: pos.col,
             offset: pos.offset,
         });
-
-        // self.stream.seek(SeekCur, 1);
     }
 
     // Set is_closing_tag in current token
