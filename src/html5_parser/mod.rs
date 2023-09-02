@@ -11,3 +11,4 @@ mod emitter;
 mod node;
 mod token_named_characters;
 mod token_replacements;
+mod quirks;

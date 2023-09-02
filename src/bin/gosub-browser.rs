@@ -25,5 +25,5 @@ fn main() {
     let mut parser = Html5Parser::new(&mut stream);
     let document = parser.parse();
 
-    println!("Generated tree: \n\n {:?}", document.root);
+    println!("Generated tree: \n\n {}", document.root);
 }
