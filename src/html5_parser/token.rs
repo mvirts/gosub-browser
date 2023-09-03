@@ -9,6 +9,12 @@ pub enum TokenType {
     EofToken,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct Attribute {
+    pub name: String,
+    pub value: String,
+}
+
 // The different token structures that can be emitted by the tokenizer
 #[derive(Clone, PartialEq)]
 pub enum Token {
@@ -21,7 +27,7 @@ pub enum Token {
     StartTagToken {
         name: String,
         is_self_closing: bool,
-        attributes: Vec<(String, String)>,
+        attributes: Vec<Attribute>,
     },
     EndTagToken {
         name: String,
@@ -84,8 +90,8 @@ impl std::fmt::Display for Token {
                 attributes,
             } => {
                 let mut result = format!("<{}", name);
-                for (key, value) in attributes.iter() {
-                    result.push_str(&format!(" {}=\"{}\"", key, value));
+                for attr in attributes.iter() {
+                    result.push_str(&format!(" {}=\"{}\"", attr.name, attr.value));
                 }
                 if *is_self_closing {
                     result.push_str(" /");

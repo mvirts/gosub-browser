@@ -2,7 +2,7 @@ use crate::html5_parser::input_stream::{InputStream, Position};
 use crate::html5_parser::input_stream::Element;
 use crate::html5_parser::input_stream::SeekMode::SeekCur;
 use crate::html5_parser::parse_errors::ParserError;
-use crate::html5_parser::token::Token;
+use crate::html5_parser::token::{Attribute, Token};
 use crate::html5_parser::token_states::State;
 
 // Constants that are not directly captured as visible chars
@@ -21,7 +21,7 @@ pub struct Tokenizer<'a> {
     pub consumed: Vec<char>,            // Current consumed characters for current token
     pub current_attr_name: String,      // Current attribute name that we need to store temporary in case we are parsing attributes
     pub current_attr_value: String,     // Current attribute value that we need to store temporary in case we are parsing attributes
-    pub current_attrs: Vec<(String, String)>,  // Current attributes
+    pub current_attrs: Vec<Attribute>,  // Current attributes
     pub current_token: Option<Token>,   // Token that is currently in the making (if any)
     pub temporary_buffer: Vec<char>,    // Temporary buffer
     pub token_queue: Vec<Token>,        // Queue of emitted tokens. Needed because we can generate multiple tokens during iteration
@@ -2251,7 +2251,10 @@ impl<'a> Tokenizer<'a> {
         match &mut self.current_token.as_mut().unwrap() {
             Token::StartTagToken { attributes, .. } => {
                 attributes.push(
-                    (name.clone(), value.clone())
+                Attribute{
+                        name: name.clone(),
+                        value: value.clone(),
+                    }
                 );
             }
             _ => {}
@@ -2275,13 +2278,16 @@ impl<'a> Tokenizer<'a> {
 
     // This function checks to see if there is already an attribute name like the one in current_attr_name.
     fn attr_already_exists(&mut self) -> bool {
-        return self.current_attrs.iter().any(|(name, ..)| name == &self.current_attr_name);
+        return self.current_attrs.iter().any(|attr| attr.name == self.current_attr_name);
     }
 
     // Saves the current attribute name and value onto the current_attrs stack, if there is anything to store
     fn store_and_clear_current_attribute(&mut self) {
         if !self.current_attr_name.is_empty() && ! self.attr_already_exists() {
-            self.current_attrs.push((self.current_attr_name.clone(), self.current_attr_value.clone()));
+            self.current_attrs.push(Attribute{
+                name: self.current_attr_name.clone(),
+                value: self.current_attr_value.clone(),
+            });
         }
 
         self.current_attr_name = String::new();
@@ -2303,7 +2309,12 @@ impl<'a> Tokenizer<'a> {
             },
             Token::StartTagToken { attributes, .. } => {
                 for attr in &self.current_attrs {
-                    attributes.push(attr.clone());
+                    attributes.push(
+                        Attribute{
+                            name: attr.name.clone(),
+                            value: attr.value.clone(),
+                        }
+                    );
                 }
                 self.current_attrs = vec![];
             }
