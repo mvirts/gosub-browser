@@ -1,3 +1,5 @@
+use crate::html5_parser::tokenizer::CHAR_NUL;
+
 // The different tokens types that can be emitted by the tokenizer
 #[derive(Debug, PartialEq)]
 pub enum TokenType {
@@ -42,6 +44,19 @@ pub enum Token {
 }
 
 impl Token {
+}
+
+impl Token {
+    // Returns true when any of the characters in the token are null
+    pub(crate) fn is_null(&self) -> bool {
+        if let Token::TextToken { value } = self {
+            value.chars().any(|ch| ch == CHAR_NUL)
+        } else {
+            false
+        }
+    }
+
+    // Returns true when the token is an EOF token
     pub fn is_eof(&self) -> bool {
         if let Token::EofToken = self {
             true
@@ -50,6 +65,7 @@ impl Token {
         }
     }
 
+    // Returns true if the text token is empty or only contains whitespace
     pub fn is_empty_or_white(&self) -> bool {
         if let Token::TextToken { value } = self {
             value.trim().is_empty()
