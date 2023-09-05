@@ -1,15 +1,12 @@
 use crate::html5_parser::parse_errors::ParserError;
-use crate::html5_parser::token_named_characters::TOKEN_NAMED_CHARS;
-use crate::html5_parser::token_replacements::TOKEN_REPLACEMENTS;
-use crate::html5_parser::tokenizer::Tokenizer;
 use crate::html5_parser::input_stream::Element;
 use crate::read_char;
 
 extern crate lazy_static;
 use lazy_static::lazy_static;
 use crate::html5_parser::input_stream::SeekMode::SeekCur;
-
-use super::tokenizer::CHAR_REPLACEMENT;
+use crate::html5_parser::tokenizer::{CHAR_REPLACEMENT, Tokenizer};
+use crate::html5_parser::tokenizer::replacement_tables::{TOKEN_NAMED_CHARS, TOKEN_REPLACEMENTS};
 
 // Different states for the character references
 pub enum CcrState {

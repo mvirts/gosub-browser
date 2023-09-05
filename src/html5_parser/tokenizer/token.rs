@@ -11,7 +11,7 @@ pub enum TokenType {
     EofToken,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Hash, Eq)]
 pub struct Attribute {
     pub name: String,
     pub value: String,
@@ -44,11 +44,8 @@ pub enum Token {
 }
 
 impl Token {
-}
-
-impl Token {
     // Returns true when any of the characters in the token are null
-    pub(crate) fn is_null(&self) -> bool {
+    pub fn is_null(&self) -> bool {
         if let Token::TextToken { value } = self {
             value.chars().any(|ch| ch == CHAR_NUL)
         } else {

@@ -1,9 +1,16 @@
+pub mod token;
+pub mod state;
+
+mod emitter;
+mod character_reference;
+mod replacement_tables;
+
 use crate::html5_parser::input_stream::{InputStream, Position};
 use crate::html5_parser::input_stream::Element;
 use crate::html5_parser::input_stream::SeekMode::SeekCur;
 use crate::html5_parser::parse_errors::ParserError;
-use crate::html5_parser::token::{Attribute, Token};
-use crate::html5_parser::token_states::State;
+use crate::html5_parser::tokenizer::state::State;
+use crate::html5_parser::tokenizer::token::{Attribute, Token};
 
 // Constants that are not directly captured as visible chars
 pub const CHAR_NUL: char = '\u{0000}';

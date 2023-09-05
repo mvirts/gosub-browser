@@ -1,9 +1,11 @@
 use std::rc::Rc;
 use crate::html5_parser::input_stream::InputStream;
 use crate::html5_parser::node::Node;
-use crate::html5_parser::quirks::QuirksMode;
-use crate::html5_parser::token::Token;
+use crate::html5_parser::parser::quirks::QuirksMode;
 use crate::html5_parser::tokenizer::{CHAR_NUL, Tokenizer};
+use crate::html5_parser::tokenizer::token::Token;
+
+mod quirks;
 
 // Insertion modes as defined in 13.2.4.1
 #[derive(Debug, Copy, Clone)]
@@ -92,6 +94,7 @@ pub struct Html5Parser<'a> {
     pending_table_character_tokens: Vec<char>,      // Pending table character tokens
     ack_self_closing: bool,                         // Acknowledge self closing tags
     active_formatting_elements: Vec<ActiveElement>, // List of active formatting elements or markers
+    is_fragment_case: bool,                         // Is the current parsing a fragment case
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]
@@ -136,6 +139,7 @@ impl<'a> Html5Parser<'a> {
             pending_table_character_tokens: vec![],
             ack_self_closing: false,
             active_formatting_elements: vec![],
+            is_fragment_case: false,
         }
     }
 
@@ -460,7 +464,8 @@ impl<'a> Html5Parser<'a> {
                     }
                 }
                 InsertionMode::InCaption => {
-                    let mut process_incaption_body = false;
+                    let process_incaption_body;
+
                     match &self.current_token {
                         Token::EndTagToken { name, .. } if name == "caption" => {
                             process_incaption_body = true;

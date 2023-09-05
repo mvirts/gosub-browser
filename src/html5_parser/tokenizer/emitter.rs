@@ -1,5 +1,5 @@
-use crate::html5_parser::token::Token;
 use std::fmt::{Display, Formatter};
+use crate::html5_parser::tokenizer::token::Token;
 
 pub(crate) trait Emitter: Display {
     fn emit(&mut self, t: Token);

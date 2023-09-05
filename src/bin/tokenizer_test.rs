@@ -1,23 +1,16 @@
 use std::{env, fs, io};
 use std::collections::HashSet;
-
 use serde_json::Value;
-use gosub_engine::html5_parser::input_stream::InputStream;
-use gosub_engine::html5_parser::token_states::{State as TokenState};
-use gosub_engine::html5_parser::tokenizer::{Options, Tokenizer};
-use gosub_engine::html5_parser::token::{Token, TokenTrait, TokenType};
-
 extern crate regex;
 use regex::Regex;
 
+use gosub_engine::html5_parser::input_stream::InputStream;
+use gosub_engine::html5_parser::tokenizer::state::{State as TokenState};
+use gosub_engine::html5_parser::tokenizer::{Options, Tokenizer};
+use gosub_engine::html5_parser::tokenizer::token::{Attribute, Token, TokenTrait, TokenType};
+
 #[macro_use]
 extern crate serde_derive;
-
-// These tests are skipped for various reasons. See test_results.md
-const SKIP_TESTS: [&str; 1] = [
-    "<!DOCTYPE a PUBLIC'\\uDBC0\\uDC00",
-
-];
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -96,13 +89,6 @@ fn main () -> io::Result<()> {
 
 fn run_token_test(test: &Test, results: &mut TestResults)
 {
-    for skip in SKIP_TESTS {
-        if test.description == skip {
-            println!("🧪 Skipping test: {}", test.description);
-            return;
-        }
-    }
-
     println!("🧪 Running test: {}", test.description);
 
     results.tests += 1;
@@ -283,7 +269,7 @@ fn match_token(have: Token, expected: &[Value], double_escaped: bool) -> bool {
     true
 }
 
-fn check_match_starttag(expected: &[Value], name: String, attributes: Vec<(String, String)>, is_self_closing: bool) -> Result<(), ()> {
+fn check_match_starttag(expected: &[Value], name: String, attributes: Vec<Attribute>, is_self_closing: bool) -> Result<(), ()> {
     let expected_name = expected.get(1).and_then(|v| v.as_str()).unwrap();
     let expected_attrs = expected.get(2).and_then(|v| v.as_object());
     let expected_self_closing = expected.get(3).and_then(|v| v.as_bool());
@@ -304,10 +290,10 @@ fn check_match_starttag(expected: &[Value], name: String, attributes: Vec<(Strin
     }
 
     // Convert the expected attr to Vec<(string, string)>
-    let expected_attrs: Vec<(String, String)> = expected_attrs.map_or(Vec::new(), |map| {
+    let expected_attrs: Vec<Attribute> = expected_attrs.map_or(Vec::new(), |map| {
         map.iter()
             .filter_map(|(key, value)| {
-                value.as_str().map(|v| (key.clone(), v.to_string()))
+                value.as_str().map(|v| Attribute{name: key.clone(), value: v.to_string()})
             })
             .collect()
     });
@@ -319,10 +305,10 @@ fn check_match_starttag(expected: &[Value], name: String, attributes: Vec<(Strin
         println!("❌ Attributes mismatch");
 
         for attr in expected_attrs {
-            println!("     * Want: '{}={}'", &attr.0, &attr.1);
+            println!("     * Want: '{}={}'", &attr.name, &attr.value);
         }
         for attr in attributes {
-            println!("     * Got: '{}={}'", attr.0, attr.1);
+            println!("     * Got: '{}={}'", attr.name, attr.value);
         }
 
         return Err(())

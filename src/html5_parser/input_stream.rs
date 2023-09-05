@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io;
 use std::io::Read;
-use crate::html5_parser::tokenizer::{CHAR_LF, CHAR_CR};
+use crate::html5_parser::tokenizer::{CHAR_CR, CHAR_LF};
 
 // Encoding defines the way the buffer stream is read, as what defines a "character".
 #[derive(PartialEq)]
