@@ -1,6 +1,4 @@
-use std::cell::RefCell;
 use std::fmt;
-use std::rc::Rc;
 use crate::html5_parser::tokenizer::token::Attribute;
 
 #[derive(Debug, PartialEq)]
@@ -19,61 +17,59 @@ pub enum NodeData {
 }
 
 pub struct Node {
-    pub parent: RefCell<Option<Rc<Node>>>,      // parent of the node, if any
-    pub children: RefCell<Vec<Rc<Node>>>,       // children of the node
-    pub name: String,                           // name of the node, or empty when its not a tag
-    pub data: RefCell<NodeData>,                // actual data of the node
+    pub id: usize,                  // ID of the node, 0 is always the root / document node
+    pub parent: Option<usize>,      // parent of the node, if any
+    pub children: Vec<usize>,       // children of the node
+    pub name: String,               // name of the node, or empty when its not a tag
+    pub data: NodeData,             // actual data of the node
 }
 
 impl Node {
     pub fn new_document() -> Self {
         Node {
-            parent: RefCell::new(None),
-            children: RefCell::new(vec![]),
-            data: RefCell::new(NodeData::Document),
-            name: "".to_string(),
-        }
-    }
-    pub fn new_element(name: &str, attributes: Vec<Attribute>) -> Self {
-        Node {
-            parent: RefCell::new(None),
-            children: RefCell::new(vec![]),
-            data: RefCell::new(NodeData::Element {
-                name: name.to_string(),
-                attributes: attributes,
-            }),
-            name: name.to_string(),
-        }
-    }
-    pub fn new_comment(value: &str) -> Self {
-        Node {
-            parent: RefCell::new(None),
-            children: RefCell::new(vec![]),
-            data: RefCell::new(NodeData::Comment {
-                value: value.to_string(),
-            }),
-            name: "".to_string(),
-        }
-    }
-    pub fn new_text(value: &str) -> Self {
-        Node {
-            parent: RefCell::new(None),
-            children: RefCell::new(vec![]),
-            data: RefCell::new(NodeData::Text {
-                value: value.to_string(),
-            }),
+            id: 0,
+            parent: None,
+            children: vec![],
+            data: NodeData::Document{},
             name: "".to_string(),
         }
     }
 
-    pub fn append_child(&mut self, child: Rc<Node>) {
-        self.children.borrow_mut().push(child);
+    pub fn new_element(name: &str, attributes: Vec<Attribute>) -> Self {
+        Node {
+            id: 0,
+            parent: None,
+            children: vec![],
+            data: NodeData::Element{
+                name: name.to_string(),
+                attributes: attributes,
+            },
+            name: name.to_string(),
+        }
     }
-    pub fn prepend_child(&mut self, child: Rc<Node>) {
-        self.children.borrow_mut().insert(0, child.to_owned());
+
+    pub fn new_comment(value: &str) -> Self {
+        Node {
+            id: 0,
+            parent: None,
+            children: vec![],
+            data: NodeData::Comment{
+                value: value.to_string(),
+            },
+            name: "".to_string(),
+        }
     }
-    pub fn insert_child(&mut self, child: Rc<Node>, index: usize) {
-        self.children.borrow_mut().insert(index, child.to_owned());
+
+    pub fn new_text(value: &str) -> Self {
+        Node {
+            id: 0,
+            parent: None,
+            children: vec![],
+            data: NodeData::Text{
+                value: value.to_string(),
+            },
+            name: "".to_string(),
+        }
     }
 }
 
@@ -85,7 +81,7 @@ pub trait NodeTrait {
 // Each node implements the NodeTrait and has a type_of that will return the node type.
 impl NodeTrait for Node {
     fn type_of(&self) -> NodeType {
-        match *self.data.borrow() {
+        match self.data {
             NodeData::Document { .. } => NodeType::Document,
             NodeData::Text { .. } => NodeType::Text,
             NodeData::Comment { .. } => NodeType::Comment,
@@ -99,7 +95,7 @@ impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.name)?;
 
-        for child in self.children.borrow().iter() {
+        for child in self.children.iter() {
             write!(f, "\n{}|- {}", "  ".repeat(2), child)?;
         }
         Ok(())

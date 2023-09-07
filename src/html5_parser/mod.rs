@@ -5,3 +5,4 @@ pub mod input_stream;
 pub mod parse_errors;
 
 mod node;
+mod node_arena;
