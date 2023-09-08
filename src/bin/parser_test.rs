@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use gosub_engine::html5_parser::input_stream::InputStream;
 use gosub_engine::html5_parser::parser::Html5Parser;
+use gosub_engine::html5_parser::parser::document::Document;
 
 pub struct TestResults{
     tests: usize,               // Number of tests (as defined in the suite)
@@ -126,10 +127,11 @@ fn run_tree_test(test: &Test, results: &mut TestResults)
     let mut is = InputStream::new();
     is.read_from_str(test.data.as_str(), None);
 
-    let mut parser = Html5Parser::new(&mut is);
-    let document = parser.parse();
+    let mut document = Document::new();
+    let mut parser = Html5Parser::new(&mut is, &mut document);
+    parser.parse();
 
-    println!("Generated tree: \n\n {}", document.root);
+    println!("Generated tree: \n\n {}", document.get_root());
 
     println!("----------------------------------------");
 }

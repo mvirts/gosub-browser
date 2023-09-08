@@ -17,8 +17,10 @@ pub struct Document {
 impl Document {
     // Creates a new document
     pub fn new() -> Self {
+        let mut arena = NodeArena::new();
+        arena.add_node(Node::new_document());
         Self {
-            arena: NodeArena::new(),
+            arena: arena,
             doctype: DocumentType::IframeSrcDoc,
             quirks_mode: QuirksMode::NoQuirks,
         }
@@ -27,6 +29,10 @@ impl Document {
     // Fetches a node by id or returns None when no node with this ID is found
     pub fn get_node_by_id(&self, node_id: usize) -> Option<&Node> {
         self.arena.get_node(node_id)
+    }
+
+    pub fn get_mut_node_by_id(&mut self, node_id: usize) -> Option<&mut Node> {
+        self.arena.get_mut_node(node_id)
     }
 
     // Add to the document
@@ -43,11 +49,6 @@ impl Document {
 
     // return the root node
     pub fn get_root(&mut self) -> &Node {
-        match self.arena.get_node(0) {
-            Some(node) => node,
-            None => {
-                &Node::new_document()
-            }
-        }
+        self.arena.get_node(0).expect("Root node not found !?")
     }
 }

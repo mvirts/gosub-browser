@@ -18,6 +18,10 @@ impl NodeArena {
         self.nodes.get(&node_id)
     }
 
+    pub fn get_mut_node(&mut self, node_id: usize) -> Option<&mut Node> {
+        self.nodes.get_mut(&node_id)
+    }
+
     pub fn add_node(&mut self, mut node: Node) -> usize {
         let id = self.next_id;
         self.next_id += 1;
