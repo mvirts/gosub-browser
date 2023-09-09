@@ -1,4 +1,5 @@
-use crate::html5_parser::node::Node;
+use std::fmt;
+use crate::html5_parser::node::{Node, NodeData};
 use crate::html5_parser::node_arena::NodeArena;
 use crate::html5_parser::parser::quirks::QuirksMode;
 
@@ -48,7 +49,48 @@ impl Document {
     }
 
     // return the root node
-    pub fn get_root(&mut self) -> &Node {
+    pub fn get_root(&self) -> &Node {
         self.arena.get_node(0).expect("Root node not found !?")
     }
 }
+
+impl Document {
+    fn display_tree(&self, node: &Node, indent: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let prefix= " ".repeat(indent);
+
+        match &node.data {
+            NodeData::Document => {
+                writeln!(f, "{}Document", prefix)?;
+            },
+            NodeData::Text { value } => {
+                writeln!(f, "{}Text[{}]", prefix, value)?;
+            },
+            NodeData::Comment { value } => {
+                writeln!(f, "{}<!--{}-->", prefix, value)?;
+            },
+            NodeData::Element { name, attributes } => {
+                write!(f, "{}<{}", prefix, name)?;
+                for attr in attributes.iter() {
+                    write!(f, " {}={}", attr.name, attr.value)?;
+                }
+                writeln!(f, ">")?;
+            },
+        }
+
+        for child_id in &node.children {
+            if let Some(child) = self.arena.get_node(*child_id) {
+                self.display_tree(&child, indent + 2, f)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for Document {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.display_tree(self.get_root(), 0, f)
+    }
+}
+
+

@@ -145,6 +145,7 @@ macro_rules! open_elements_by_index {
 }
 
 // Active formatting elements, which could be a regular node(id), or a marker
+#[derive(PartialEq)]
 enum ActiveElement {
     Node(usize),
     Marker,
@@ -220,7 +221,7 @@ impl<'a> Html5Parser<'a> {
                 break;
             }
 
-            println!("Token: {}", self.current_token);
+            // println!("Token: {}", self.current_token);
 
             match self.insertion_mode {
                 InsertionMode::Initial => {
@@ -1820,8 +1821,75 @@ impl<'a> Html5Parser<'a> {
     }
 
     fn reconstruct_formatting(&mut self) {
-        todo!()
+        // 1.
+        if self.active_formatting_elements.is_empty() {
+            return;
+        }
+
+        // 3.
+        let entry = self.active_formatting_elements.last().unwrap();
+
+        // 2.
+        match entry {
+            ActiveElement::Marker => return,
+            ActiveElement::Node(node_id) => {
+                let node = self.document.get_node_by_id(*node_id).unwrap();
+                if open_elements_has!(self, node.name) {
+                    return;
+                }
+            }
+        }
+
+        // 4. rewind:
+        let mut idx;
+        loop {
+            idx = self.active_formatting_elements.len() - 1;
+            if idx == 0 {
+                // create element
+            }
+
+            idx -= 1;
+
+            match entry {
+                ActiveElement::Marker => break,
+                ActiveElement::Node(node_id) => {
+                    let node = self.document.get_node_by_id(*node_id).unwrap();
+                    if open_elements_has!(self, node.name) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 7. advance
+        loop {
+            idx += 1;
+
+            // 8/9. Create
+            // replace shzzls
+
+            // 10. If entry for new element is not last entry, return to advance
+            if idx == self.active_formatting_elements.len() {
+                break;
+            }
+        }
     }
+
+    // 1. No entries: return
+    // 2. last is a marker, return
+    // 2. last is an element in the stack of open elements: return
+    // 3. entry is last element
+
+    // 4. rewind:
+    //      no entries before entry, jump to create
+    // 5. entry = entry before entry
+    // 6. if entry != marker or entry is not in the stack of open elements, jump to rewind
+    // 7. advance:
+    //      entry = entry after entry
+    // 8. create:
+    //      insert html element for token for which entry was created to obtain new element
+    // 9 replace entry for entry with an entry for new element
+    // 10 if entry for new element is not last entry, return to advance
 
     fn stop_parsing(&self) {
         todo!()

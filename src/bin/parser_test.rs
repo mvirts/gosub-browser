@@ -131,7 +131,7 @@ fn run_tree_test(test: &Test, results: &mut TestResults)
     let mut parser = Html5Parser::new(&mut is, &mut document);
     parser.parse();
 
-    println!("Generated tree: \n\n {}", document.get_root());
+    println!("Generated tree: \n\n {}", document);
 
     println!("----------------------------------------");
 }

@@ -1,4 +1,3 @@
-use std::fmt;
 use crate::html5_parser::tokenizer::token::Attribute;
 
 #[derive(Debug, PartialEq)]
@@ -88,35 +87,6 @@ impl NodeTrait for Node {
             NodeData::Element { .. } => NodeType::Element,
         }
     }
-}
-
-impl fmt::Display for Node {
-
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.name)?;
-
-        for child in self.children.iter() {
-            write!(f, "\n{}|- {}", "  ".repeat(2), child)?;
-        }
-        Ok(())
-    }
-
-    // fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    //     // Helper function to recursively format nodes with indentation
-    //     fn format_node(node: &Node, f: &mut fmt::Formatter, indent: usize) -> fmt::Result {
-    //         // Write the current node's value with the current indentation
-    //         writeln!(f, "{:indent$}{}", "", node.value, indent = indent)?;
-    //
-    //         // If there are children, recursively format them with increased indentation
-    //         for child in node.children.borrow().iter() {
-    //             format_node(child, f, indent + 2)?; // Increase indentation by 2 spaces for children
-    //         }
-    //         Ok(())
-    //     }
-    //
-    //     // Start formatting from the current node with 0 indentation
-    //     format_node(self, f, 0)
-    // }
 }
 
 #[cfg(test)]
