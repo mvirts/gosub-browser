@@ -83,8 +83,15 @@ macro_rules! pop_until_any {
 // Pops the last element from the open elements, and panics if it is not $name
 macro_rules! pop_check {
     ($self:expr, $name:expr) => {
-        if ! $self.open_elements.pop_check(|node_id| $self.document.get_node_by_id(*node_id).expect("node not found").name == $name) {
-            panic!("$name tag should be popped from open elements");
+        println!("Popping {}", $name);
+        println!("From {:?}", $self.open_elements);
+        if ! $self.open_elements.pop_check(|&node_id| {
+            println!("NODE ID {:?}", node_id);
+            println!("NODE {:?}", $self.document.get_node_by_id(node_id).unwrap().name);
+
+            $self.document.get_node_by_id(node_id).expect("node not found").name == $name
+        }) {
+            panic!("{} tag should be popped from open elements", $name);
         }
     };
 }
@@ -104,12 +111,6 @@ macro_rules! open_elements_get {
         $self.document.get_node_by_id($self.open_elements[$idx]).expect("Open element not found")
     };
 }
-
-// macro_rules! open_elements_find {
-//     ($self:expr, $name:expr) => {
-//         $self.open_elements.iter().rev().find(|node_id| $self.document.get_node_by_id(**node_id).unwrap_or(&NULL_NODE).name == $name)
-//     };
-// }
 
 macro_rules! open_elements_has {
     ($self:expr, $name:expr) => {
@@ -231,7 +232,8 @@ impl<'a> Html5Parser<'a> {
                         },
                         Token::CommentToken { .. } => {
                             let node = self.create_node(&self.current_token);
-                            self.document.add_node(node, current_node!(self).id);
+                            let node_id = self.document.add_node(node, current_node!(self).id);
+                            self.open_elements.push(node_id);
                         }
                         Token::DocTypeToken { name, pub_identifier, sys_identifier, force_quirks } => {
                             if name.is_some() && name.as_ref().unwrap() != "html" ||
@@ -242,7 +244,8 @@ impl<'a> Html5Parser<'a> {
                             }
 
                             let node = self.create_node(&self.current_token);
-                            self.document.add_node(node, current_node!(self).id);
+                            let node_id = self.document.add_node(node, current_node!(self).id);
+                            self.open_elements.push(node_id);
 
                             if self.document.doctype != DocumentType::IframeSrcDoc && self.parser_cannot_change_mode {
                                 self.document.quirks_mode = self.identify_quirks_mode(name, pub_identifier.clone(), sys_identifier.clone(), *force_quirks);
@@ -273,14 +276,14 @@ impl<'a> Html5Parser<'a> {
                         }
                         Token::CommentToken { .. } => {
                             let node = self.create_node(&self.current_token);
-                            self.document.add_node(node, current_node!(self).id);
+                            self.document.add_node(node, 0);
                         }
                         Token::TextToken { .. } if self.current_token.is_empty_or_white() => {
                             // ignore token
                         }
                         Token::StartTagToken { name, .. } if name == "html" => {
                             let node = self.create_node(&self.current_token);
-                            let node_id = self.document.add_node(node, current_node!(self).id);
+                            let node_id = self.document.add_node(node, 0);
                             self.open_elements.push(node_id);
 
                             self.insertion_mode = InsertionMode::BeforeHead;
@@ -299,7 +302,7 @@ impl<'a> Html5Parser<'a> {
                     if anything_else {
                         let token = Token::StartTagToken { name: "html".to_string(), is_self_closing: false, attributes: Vec::new() };
                         let node = self.create_node(&token);
-                        let node_id = self.document.add_node(node, current_node!(self).id);
+                        let node_id = self.document.add_node(node, 0);
                         self.open_elements.push(node_id);
 
                         self.insertion_mode = InsertionMode::BeforeHead;
@@ -319,6 +322,7 @@ impl<'a> Html5Parser<'a> {
                         },
                         Token::DocTypeToken { .. } => {
                             self.parse_error("doctype not allowed in before head insertion mode");
+                            // ignore token
                         },
                         Token::StartTagToken { name, .. } if name == "html" => {
                             self.handle_in_body();
@@ -326,8 +330,9 @@ impl<'a> Html5Parser<'a> {
                         Token::StartTagToken { name, .. } if name == "head" => {
                             let node = self.create_node(&self.current_token);
                             let node_id = self.document.add_node(node, current_node!(self).id);
-                            self.head_element = Some(node_id);
+                            self.open_elements.push(node_id);
 
+                            self.head_element = Some(node_id);
                             self.insertion_mode = InsertionMode::InHead;
                         },
                         Token::EndTagToken { name } if name == "head" || name == "body" || name == "html" || name == "br" => {
@@ -335,6 +340,7 @@ impl<'a> Html5Parser<'a> {
                         }
                         Token::EndTagToken { .. } => {
                             self.parse_error("end tag not allowed in before head insertion mode");
+                            // ignore token
                         },
                         _ => {
                             anything_else = true;
@@ -344,6 +350,7 @@ impl<'a> Html5Parser<'a> {
                         let token = Token::StartTagToken { name: "head".to_string(), is_self_closing: false, attributes: Vec::new() };
                         let node = self.create_node(&token);
                         let node_id = self.document.add_node(node, current_node!(self).id);
+                        self.open_elements.push(node_id);
                         self.head_element = Some(node_id);
 
                         self.insertion_mode = InsertionMode::InHead;
@@ -466,7 +473,8 @@ impl<'a> Html5Parser<'a> {
                     if anything_else {
                         let token = Token::StartTagToken { name: "body".to_string(), is_self_closing: false, attributes: Vec::new() };
                         let node = self.create_node(&token);
-                        self.document.add_node(node, current_node!(self).id);
+                        let node_id = self.document.add_node(node, current_node!(self).id);
+                        self.open_elements.push(node_id);
 
                         self.insertion_mode = InsertionMode::InBody;
                         self.reprocess_token = true;
@@ -581,7 +589,8 @@ impl<'a> Html5Parser<'a> {
                         },
                         Token::StartTagToken { name, is_self_closing, .. } if name == "col" => {
                             let node = self.create_node(&self.current_token);
-                            self.document.add_node(node, current_node!(self).id);
+                            let node_id = self.document.add_node(node, current_node!(self).id);
+                            self.open_elements.push(node_id);
 
                             self.open_elements.pop();
 
@@ -628,7 +637,9 @@ impl<'a> Html5Parser<'a> {
                     if anything_else {
                         let token = Token::StartTagToken { name: "body".to_string(), is_self_closing: false, attributes: Vec::new() };
                         let node = self.create_node(&token);
-                        self.document.add_node(node, current_node!(self).id);
+                        let node_id = self.document.add_node(node, current_node!(self).id);
+                        self.open_elements.push(node_id);
+
 
                         self.insertion_mode = InsertionMode::InBody;
                         self.reprocess_token = true;
@@ -640,7 +651,9 @@ impl<'a> Html5Parser<'a> {
                             self.clear_stack_back_to_table_context();
 
                             let node = self.create_node(&self.current_token);
-                            self.document.add_node(node, current_node!(self).id);
+                            let node_id = self.document.add_node(node, current_node!(self).id);
+                            self.open_elements.push(node_id);
+
 
                             self.insertion_mode = InsertionMode::InRow;
                         },
@@ -651,7 +664,9 @@ impl<'a> Html5Parser<'a> {
 
                             let token = Token::StartTagToken { name: "tr".to_string(), is_self_closing: false, attributes: Vec::new() };
                             let node = self.create_node(&token);
-                            self.document.add_node(node, current_node!(self).id);
+                            let node_id = self.document.add_node(node, current_node!(self).id);
+                            self.open_elements.push(node_id);
+
 
                             self.insertion_mode = InsertionMode::InRow;
                             self.reprocess_token = true;
@@ -706,7 +721,9 @@ impl<'a> Html5Parser<'a> {
                             self.clear_stack_back_to_table_row_context();
 
                             let node = self.create_node(&self.current_token);
-                            self.document.add_node(node, current_node!(self).id);
+                            let node_id = self.document.add_node(node, current_node!(self).id);
+                            self.open_elements.push(node_id);
+
 
                             self.insertion_mode = InsertionMode::InCell;
                             self.add_marker();
@@ -828,7 +845,9 @@ impl<'a> Html5Parser<'a> {
                             }
 
                             let node = self.create_node(&self.current_token);
-                            self.document.add_node(node, current_node!(self).id);
+                            let node_id = self.document.add_node(node, current_node!(self).id);
+                            self.open_elements.push(node_id);
+
                         },
                         Token::StartTagToken { name, is_self_closing, .. } if name == "optgroup" => {
                             if current_node!(self).name == "optgroup" || current_node!(self).name == "option" {
@@ -836,7 +855,8 @@ impl<'a> Html5Parser<'a> {
                             }
 
                             let node = self.create_node(&self.current_token);
-                            self.document.add_node(node, current_node!(self).id);
+                            let node_id = self.document.add_node(node, current_node!(self).id);
+                            self.open_elements.push(node_id);
 
                             self.open_elements.pop();
 
@@ -1210,21 +1230,17 @@ impl<'a> Html5Parser<'a> {
 
                 return Node::new_element(val.as_str(), Vec::new());
             }
-            Token::StartTagToken { name, is_self_closing, attributes} => {
-                val = format!("start_tag[{}, selfclosing: {}]", name, is_self_closing);
-                return Node::new_element(val.as_str(), attributes.clone());
+            Token::StartTagToken { name, attributes, .. } => {
+                return Node::new_element(name, attributes.clone());
             }
             Token::EndTagToken { name } => {
-                val = format!("end_tag[{}]", name);
-                return Node::new_element(val.as_str(), Vec::new());
+                return Node::new_element(name, Vec::new());
             }
             Token::CommentToken { value } => {
-                val = format!("comment[{}]", value);
-                return Node::new_comment(val.as_str());
+                return Node::new_comment(value);
             }
             Token::TextToken { value } => {
-                val = format!("text[{}]", value);
-                return Node::new_text(val.as_str());
+                return Node::new_text(format!("\"{}\"", value).as_str());
             }
             Token::EofToken => {
                 panic!("EOF token not allowed");
@@ -1662,7 +1678,7 @@ impl<'a> Html5Parser<'a> {
             }
         }
         if anything_else {
-            self.open_elements.pop();
+            pop_check!(self, "head");
             self.insertion_mode = InsertionMode::AfterHead;
             self.reprocess_token = true;
         }

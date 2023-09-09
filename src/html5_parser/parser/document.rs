@@ -56,14 +56,17 @@ impl Document {
 
 impl Document {
     fn display_tree(&self, node: &Node, indent: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let prefix= " ".repeat(indent);
+        let mut prefix= " ".repeat(indent);
+        if ! prefix.is_empty() {
+            prefix = format!("{}└─ ", prefix);
+        }
 
         match &node.data {
             NodeData::Document => {
                 writeln!(f, "{}Document", prefix)?;
             },
             NodeData::Text { value } => {
-                writeln!(f, "{}Text[{}]", prefix, value)?;
+                writeln!(f, "{}{}", prefix, value)?;
             },
             NodeData::Comment { value } => {
                 writeln!(f, "{}<!--{}-->", prefix, value)?;
