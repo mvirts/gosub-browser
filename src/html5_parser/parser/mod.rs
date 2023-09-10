@@ -3,6 +3,9 @@ pub mod document;
 
 // ------------------------------------------------------------
 
+use std::cell::{Ref, RefCell};
+use std::rc::Rc;
+use crate::html5_parser::error_logger::ErrorLogger;
 use crate::html5_parser::input_stream::InputStream;
 use crate::html5_parser::node::{Node, NodeData};
 use crate::html5_parser::parser::document::{Document, DocumentType};
@@ -83,12 +86,7 @@ macro_rules! pop_until_any {
 // Pops the last element from the open elements, and panics if it is not $name
 macro_rules! pop_check {
     ($self:expr, $name:expr) => {
-        println!("Popping {}", $name);
-        println!("From {:?}", $self.open_elements);
         if ! $self.open_elements.pop_check(|&node_id| {
-            println!("NODE ID {:?}", node_id);
-            println!("NODE {:?}", $self.document.get_node_by_id(node_id).unwrap().name);
-
             $self.document.get_node_by_id(node_id).expect("node not found").name == $name
         }) {
             panic!("{} tag should be popped from open elements", $name);
@@ -173,6 +171,10 @@ pub struct Html5Parser<'a> {
     active_formatting_elements: Vec<ActiveElement>, // List of active formatting elements or markers
     is_fragment_case: bool,                         // Is the current parsing a fragment case
     document: &'a mut Document,                     // A reference to the document we are parsing
+    error_logger: Rc<RefCell<ErrorLogger>>,              // Error logger
+}
+
+impl<'a> Html5Parser<'a> {
 }
 
 // Defines the scopes for in_scope()
@@ -187,8 +189,11 @@ enum Scope {
 impl<'a> Html5Parser<'a> {
     // Creates a new parser object with the given input stream
     pub fn new(stream: &'a mut InputStream, document: &'a mut Document) -> Self {
+        let error_logger = Rc::new(RefCell::new(ErrorLogger::new()));
+        let tokenizer = Tokenizer::new(stream,None, error_logger.clone());
+
         Html5Parser {
-            tokenizer: Tokenizer::new(stream, None),
+            tokenizer: tokenizer,
             insertion_mode: InsertionMode::Initial,
             original_insertion_mode: InsertionMode::Initial,
             template_insertion_mode: vec![],
@@ -207,6 +212,7 @@ impl<'a> Html5Parser<'a> {
             active_formatting_elements: vec![],
             is_fragment_case: false,
             document: document,
+            error_logger: error_logger,
         }
     }
 
@@ -1205,15 +1211,18 @@ impl<'a> Html5Parser<'a> {
                 }
             }
 
-            for error in &self.tokenizer.errors {
+            for error in self.tokenizer.error_logger.borrow().get_errors() {
                 println!("({}/{}): {}", error.line, error.col, error.message);
             }
         }
     }
 
-    // Creates a parse error and halts the parser
+    pub fn get_parse_errors(&self) -> Ref<'_, ErrorLogger>  {
+        self.error_logger.borrow()
+    }
+
     fn parse_error(&self, message: &str) {
-        println!("Parse error ({}/{}): {}", self.tokenizer.get_position().line, self.tokenizer.get_position().col, message);
+        self.error_logger.borrow_mut().add_error(self.tokenizer.get_position(), message);
     }
 
     // Create a new node that is not connected or attached to the document arena

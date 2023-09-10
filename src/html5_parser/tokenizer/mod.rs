@@ -5,10 +5,12 @@ mod emitter;
 mod character_reference;
 mod replacement_tables;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+use crate::html5_parser::error_logger::{ErrorLogger, ParserError};
 use crate::html5_parser::input_stream::{InputStream, Position};
 use crate::html5_parser::input_stream::Element;
 use crate::html5_parser::input_stream::SeekMode::SeekCur;
-use crate::html5_parser::parse_errors::ParserError;
 use crate::html5_parser::tokenizer::state::State;
 use crate::html5_parser::tokenizer::token::{Attribute, Token};
 
@@ -32,14 +34,8 @@ pub struct Tokenizer<'a> {
     pub current_token: Option<Token>,   // Token that is currently in the making (if any)
     pub temporary_buffer: Vec<char>,    // Temporary buffer
     pub token_queue: Vec<Token>,        // Queue of emitted tokens. Needed because we can generate multiple tokens during iteration
-    pub errors: Vec<ParseError>,        // Parse errors (if any)
     pub last_start_token: String,       // The last emitted start token (or empty if none)
-}
-
-impl<'a> Tokenizer<'a> {
-    pub(crate) fn get_position(&self) -> Position {
-        return self.stream.position;
-    }
+    pub error_logger: Rc<RefCell<ErrorLogger>>,      // Parse errors
 }
 
 pub struct Options {
@@ -196,18 +192,9 @@ macro_rules! emit_token {
     }
 }
 
-// Parser error that defines an error (message) on the given position
-#[derive(PartialEq)]
-pub struct ParseError {
-    pub message: String,  // Parse message
-    pub line: usize,        // Line number of the error
-    pub col: usize,         // Offset on line of the error
-    pub offset: usize,      // Position of the error on the line
-}
-
 impl<'a> Tokenizer<'a> {
     // Creates a new tokenizer with the given inputstream and additional options if any
-    pub fn new(input: &'a mut InputStream /*, emitter: &'a mut dyn Emitter*/, opts: Option<Options>) -> Self {
+    pub fn new(input: &'a mut InputStream, opts: Option<Options>, error_logger: Rc<RefCell<ErrorLogger>>) -> Self {
         return Tokenizer {
             stream: input,
             state: opts.as_ref().map_or(State::DataState, |o| o.initial_state),
@@ -219,9 +206,13 @@ impl<'a> Tokenizer<'a> {
             current_attr_value: String::new(),
             current_attrs: vec![],
             temporary_buffer: vec![],
-            errors: vec![],
+            error_logger: error_logger
         };
     }
+
+    pub(crate) fn get_position(&self) -> Position {
+            return self.stream.position;
+        }
 
     // Retrieves the next token from the input stream or Token::EOF when the end is reached
     pub fn next_token(&mut self) -> Token {
@@ -254,10 +245,10 @@ impl<'a> Tokenizer<'a> {
                         },
                         Element::Eof => {
                             // EOF
-                            if self.has_consumed_data() {
-                                emit_token!(self, Token::TextToken { value: self.get_consumed_str() });
-                                self.clear_consume_buffer();
-                            }
+                            // if self.has_consumed_data() {
+                            //     emit_token!(self, Token::TextToken { value: self.get_consumed_str() });
+                            //     self.clear_consume_buffer();
+                            // }
                             emit_token!(self, Token::EofToken);
                         },
                         _ => self.consume(c.utf8()),
@@ -275,10 +266,10 @@ impl<'a> Tokenizer<'a> {
                         },
                         Element::Utf8('<') => self.state = State::RcDataLessThanSignState,
                         Element::Eof => {
-                            if self.has_consumed_data() {
-                                emit_token!(self, Token::TextToken { value: self.get_consumed_str().clone() });
-                                self.clear_consume_buffer();
-                            }
+                            // if self.has_consumed_data() {
+                            //     emit_token!(self, Token::TextToken { value: self.get_consumed_str().clone() });
+                            //     self.clear_consume_buffer();
+                            // }
                             emit_token!(self, Token::EofToken);
                         },
                         Element::Utf8(CHAR_NUL) => {
@@ -303,10 +294,10 @@ impl<'a> Tokenizer<'a> {
                         },
                         Element::Eof => {
                             // EOF
-                            if self.has_consumed_data() {
-                                emit_token!(self, Token::TextToken { value: self.get_consumed_str() });
-                                self.clear_consume_buffer();
-                            }
+                            // if self.has_consumed_data() {
+                            //     emit_token!(self, Token::TextToken { value: self.get_consumed_str() });
+                            //     self.clear_consume_buffer();
+                            // }
                             emit_token!(self, Token::EofToken);
                         },
                         _ => self.consume(c.utf8()),
@@ -321,10 +312,10 @@ impl<'a> Tokenizer<'a> {
                             self.consume(CHAR_REPLACEMENT);
                         },
                         Element::Eof => {
-                            if self.has_consumed_data() {
-                                emit_token!(self, Token::TextToken { value: self.get_consumed_str().clone() });
-                                self.clear_consume_buffer();
-                            }
+                            // if self.has_consumed_data() {
+                            //     emit_token!(self, Token::TextToken { value: self.get_consumed_str().clone() });
+                            //     self.clear_consume_buffer();
+                            // }
                             emit_token!(self, Token::EofToken);
                         },
                         _ => self.consume(c.utf8()),
@@ -338,10 +329,10 @@ impl<'a> Tokenizer<'a> {
                             self.consume(CHAR_REPLACEMENT);
                         },
                         Element::Eof => {
-                            if self.has_consumed_data() {
-                                emit_token!(self, Token::TextToken { value: self.get_consumed_str().clone() });
-                                self.clear_consume_buffer();
-                            }
+                            // if self.has_consumed_data() {
+                            //     emit_token!(self, Token::TextToken { value: self.get_consumed_str().clone() });
+                            //     self.clear_consume_buffer();
+                            // }
                             emit_token!(self, Token::EofToken);
                         },
                         _ => self.consume(c.utf8()),
@@ -2197,36 +2188,12 @@ impl<'a> Tokenizer<'a> {
         self.consumed.clear()
     }
 
-    // Return the list of current parse errors
-    pub fn get_errors(&self) -> &Vec<ParseError> {
-        &self.errors
-    }
-
     // Creates a parser log error message
-    pub(crate) fn parse_error(&mut self, error: ParserError) {
-
+    pub(crate) fn parse_error(&mut self, message: ParserError) {
         // The previous position is where the error occurred
         let pos = self.stream.get_previous_position();
 
-        let mut already_exists= false;
-        for err in &self.errors {
-            if err.line == pos.line && err.col == pos.col && err.message == error.as_str().to_string() {
-                already_exists = true;
-            }
-        }
-
-        // Don't add when this error already exists (for this exact position)
-        if already_exists {
-            return
-        }
-
-        // Add to parse log
-        self.errors.push(ParseError{
-            message: error.as_str().to_string(),
-            line: pos.line,
-            col: pos.col,
-            offset: pos.offset,
-        });
+        self.error_logger.borrow_mut().add_error(pos, message.as_str());
     }
 
     // Set is_closing_tag in current token

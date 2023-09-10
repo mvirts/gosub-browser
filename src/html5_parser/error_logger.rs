@@ -1,3 +1,5 @@
+use crate::html5_parser::input_stream::Position;
+
 pub enum ParserError {
     AbruptDoctypePublicIdentifier,
     AbruptDoctypeSystemIdentifier,
@@ -103,5 +105,57 @@ impl ParserError {
             ParserError::UnknownNamedCharacterReference => "unknown-named-character-reference",
             ParserError::AbruptClosingOfEmptyComment => "abrupt-closing-of-empty-comment",
         }
+    }
+}
+
+
+// Parser error that defines an error (message) on the given position
+#[derive(PartialEq)]
+pub struct ParseError {
+    pub message: String,  // Parse message
+    pub line: usize,        // Line number of the error
+    pub col: usize,         // Offset on line of the error
+    pub offset: usize,      // Position of the error on the line
+}
+
+pub struct ErrorLogger {
+    errors: Vec<ParseError>,
+}
+
+impl ErrorLogger {
+    pub(crate) fn new() -> Self {
+        ErrorLogger {
+            errors: Vec::new(),
+        }
+    }
+}
+
+impl ErrorLogger {
+    pub fn get_errors(&self) -> &Vec<ParseError> {
+        &self.errors
+    }
+
+    pub fn add_error(&mut self, pos: Position, message: &str)
+    {
+        let mut already_exists = false;
+        for err in &self.errors {
+            if err.line == pos.line && err.col == pos.col && err.message == message.to_string() {
+                already_exists = true;
+            }
+        }
+
+        // Don't add when this error already exists (for this exact position and message)
+        if already_exists {
+            return
+        }
+
+        self.errors.push(ParseError {
+            line: pos.line,
+            col: pos.col,
+            offset: pos.offset,
+            message: message.to_string()
+        });
+
+        println!("Parse error ({}/{}): {}", pos.line, pos.col, message);
     }
 }

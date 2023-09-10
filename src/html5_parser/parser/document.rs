@@ -69,7 +69,7 @@ impl Document {
                 writeln!(f, "{}{}", prefix, value)?;
             },
             NodeData::Comment { value } => {
-                writeln!(f, "{}<!--{}-->", prefix, value)?;
+                writeln!(f, "{}<!-- {} -->", prefix, value)?;
             },
             NodeData::Element { name, attributes } => {
                 write!(f, "{}<{}", prefix, name)?;

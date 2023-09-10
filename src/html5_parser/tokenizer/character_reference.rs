@@ -1,5 +1,5 @@
-use crate::html5_parser::parse_errors::ParserError;
 use crate::html5_parser::input_stream::Element;
+use crate::html5_parser::error_logger::ParserError;
 use crate::read_char;
 
 extern crate lazy_static;

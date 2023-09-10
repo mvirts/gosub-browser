@@ -51,7 +51,8 @@ fn main () -> io::Result<()> {
         println!("🏃‍♂️ Running {} tests from 🗄️ {:?}\n", tests.len(), path);
 
         for test in tests {
-            run_tree_test(&test, &mut results)
+            run_tree_test(&test, &mut results);
+            break;
         }
     }
 
@@ -82,6 +83,7 @@ fn read_tests(file_path: PathBuf) -> io::Result<Vec<Test>> {
 
         if line.starts_with("#data") {
             if !current_test.data.is_empty() || !current_test.errors.is_empty() || !current_test.document.is_empty() {
+                current_test.data = current_test.data.trim_end().to_string();
                 tests.push(current_test);
                 current_test = Test{
                     file_path: file_path.to_str().unwrap().clone().to_string(),
@@ -112,6 +114,7 @@ fn read_tests(file_path: PathBuf) -> io::Result<Vec<Test>> {
 
     // Push the last test if it has data
     if !current_test.data.is_empty() || !current_test.errors.is_empty() || !current_test.document.is_empty() {
+        current_test.data = current_test.data.trim_end().to_string();
         tests.push(current_test);
     }
 
@@ -131,7 +134,14 @@ fn run_tree_test(test: &Test, results: &mut TestResults)
     let mut parser = Html5Parser::new(&mut is, &mut document);
     parser.parse();
 
-    println!("Generated tree: \n\n {}", document);
+
+    println!("Parser errors: \n\n");
+    for error in parser.get_parse_errors().get_errors() {
+        println!("Error: ({}:{}) {}", error.line, error.col, error.message);
+    }
+
+    println!("Generated tree: \n\n");
+    println!("{}", document);
 
     println!("----------------------------------------");
 }
