@@ -3,9 +3,9 @@ pub mod document;
 
 // ------------------------------------------------------------
 
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
-use crate::html5_parser::error_logger::ErrorLogger;
+use crate::html5_parser::error_logger::{ErrorLogger, ParseError, ParserError};
 use crate::html5_parser::input_stream::InputStream;
 use crate::html5_parser::node::{Node, NodeData};
 use crate::html5_parser::parser::document::{Document, DocumentType};
@@ -170,8 +170,8 @@ pub struct Html5Parser<'a> {
     ack_self_closing: bool,                         // Acknowledge self closing tags
     active_formatting_elements: Vec<ActiveElement>, // List of active formatting elements or markers
     is_fragment_case: bool,                         // Is the current parsing a fragment case
-    document: &'a mut Document,                     // A reference to the document we are parsing
-    error_logger: Rc<RefCell<ErrorLogger>>,              // Error logger
+    document: Document,                             // A reference to the document we are parsing
+    error_logger: Rc<RefCell<ErrorLogger>>,         // Error logger
 }
 
 impl<'a> Html5Parser<'a> {
@@ -188,7 +188,7 @@ enum Scope {
 
 impl<'a> Html5Parser<'a> {
     // Creates a new parser object with the given input stream
-    pub fn new(stream: &'a mut InputStream, document: &'a mut Document) -> Self {
+    pub fn new(stream: &'a mut InputStream) -> Self {
         let error_logger = Rc::new(RefCell::new(ErrorLogger::new()));
         let tokenizer = Tokenizer::new(stream,None, error_logger.clone());
 
@@ -211,13 +211,13 @@ impl<'a> Html5Parser<'a> {
             ack_self_closing: false,
             active_formatting_elements: vec![],
             is_fragment_case: false,
-            document: document,
             error_logger: error_logger,
+            document: Document::new(),
         }
     }
 
     // Parses the input stream into a Node tree
-    pub fn parse(&mut self) {
+    pub fn parse(&mut self) -> (&Document, Vec<ParseError>) {
         loop {
             // If reprocess_token is true, we should process the same token again
             if !self.reprocess_token {
@@ -232,6 +232,8 @@ impl<'a> Html5Parser<'a> {
 
             match self.insertion_mode {
                 InsertionMode::Initial => {
+                    let mut anything_else = false;
+
                     match &self.current_token {
                         Token::TextToken { .. } if self.current_token.is_empty_or_white() => {
                             // ignore token
@@ -259,18 +261,34 @@ impl<'a> Html5Parser<'a> {
 
                             self.insertion_mode = InsertionMode::BeforeHtml;
                         },
-                        _ => {
+                        Token::StartTagToken { .. } => {
                             if self.document.doctype != DocumentType::IframeSrcDoc {
-                                self.parse_error("not an iframe doc src");
+                                self.parse_error(ParserError::ExpectedDocTypeButGotStartTag.as_str());
                             }
-
-                            if self.parser_cannot_change_mode {
-                                self.document.quirks_mode = QuirksMode::Quirks;
+                            anything_else = true;
+                        },
+                        Token::EndTagToken { .. } => {
+                            if self.document.doctype != DocumentType::IframeSrcDoc {
+                                self.parse_error(ParserError::ExpectedDocTypeButGotEndTag.as_str());
                             }
-
-                            self.insertion_mode = InsertionMode::BeforeHtml;
-                            self.reprocess_token = true;
+                            anything_else = true;
+                        },
+                        Token::TextToken { .. } => {
+                            if self.document.doctype != DocumentType::IframeSrcDoc {
+                                self.parse_error(ParserError::ExpectedDocTypeButGotChars.as_str());
+                            }
+                            anything_else = true;
                         }
+                        _ => anything_else = true,
+                    }
+
+                    if anything_else {
+                        if self.parser_cannot_change_mode {
+                            self.document.quirks_mode = QuirksMode::Quirks;
+                        }
+
+                        self.insertion_mode = InsertionMode::BeforeHtml;
+                        self.reprocess_token = true;
                     }
                 },
                 InsertionMode::BeforeHtml => {
@@ -1210,15 +1228,13 @@ impl<'a> Html5Parser<'a> {
                     }
                 }
             }
-
-            for error in self.tokenizer.error_logger.borrow().get_errors() {
-                println!("({}/{}): {}", error.line, error.col, error.message);
-            }
         }
+
+        (&self.document, self.error_logger.borrow().get_errors().clone())
     }
 
-    pub fn get_parse_errors(&self) -> Ref<'_, ErrorLogger>  {
-        self.error_logger.borrow()
+    pub fn get_parse_errors(&self) -> Vec<ParseError> {
+        self.error_logger.borrow().get_errors().clone()
     }
 
     fn parse_error(&self, message: &str) {
@@ -1407,22 +1423,6 @@ impl<'a> Html5Parser<'a> {
         }
     }
 
-    // // Returns the current node id, which is the last node in the open elements stack
-    // fn get_current_node_id(&self) -> usize {
-    //     match self.open_elements.last() {
-    //         Some(node_id) => *node_id,
-    //         None => 0,      // Assume root node if no node is found
-    //     }
-    // }
-    //
-    // // Returns the current node, which is the last node in the open elements stack
-    // fn get_current_node(&self) -> Option<&Node> {
-    //     match self.open_elements.last() {
-    //         Some(node_id) => self.document.get_node_by_id(*node_id),
-    //         None => None,
-    //     }
-    // }
-
     // Pop all elements back to a table context
     fn clear_stack_back_to_table_context(&mut self) {
         while self.open_elements.len() > 0 {
@@ -1499,7 +1499,6 @@ impl<'a> Html5Parser<'a> {
         self.clear_active_formatting_elements_until_marker();
         self.insertion_mode = InsertionMode::InRow;
     }
-
 
     fn handle_in_body(&mut self) {
         match &self.current_token {
@@ -1693,8 +1692,7 @@ impl<'a> Html5Parser<'a> {
         }
     }
 
-    fn handle_in_template(&mut self) {
-    }
+    fn handle_in_template(&mut self) {}
 
     fn handle_in_table(&mut self) {
         let mut anything_else = false;

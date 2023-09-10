@@ -4,5 +4,5 @@ pub mod tokenizer;
 pub mod input_stream;
 pub mod error_logger;
 
-mod node;
+pub mod node;
 mod node_arena;

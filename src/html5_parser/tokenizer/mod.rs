@@ -5,7 +5,7 @@ mod emitter;
 mod character_reference;
 mod replacement_tables;
 
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 use crate::html5_parser::error_logger::{ErrorLogger, ParserError};
 use crate::html5_parser::input_stream::{InputStream, Position};
@@ -223,6 +223,10 @@ impl<'a> Tokenizer<'a> {
         }
 
         return self.token_queue.remove(0);
+    }
+
+    pub fn get_error_logger(&self) -> Ref<ErrorLogger> {
+        self.error_logger.borrow()
     }
 
     // Consumes the input stream. Continues until the stream is completed or a token has been generated.

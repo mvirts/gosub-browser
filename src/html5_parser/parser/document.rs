@@ -22,7 +22,7 @@ impl Document {
         arena.add_node(Node::new_document());
         Self {
             arena: arena,
-            doctype: DocumentType::IframeSrcDoc,
+            doctype: DocumentType::HTML,
             quirks_mode: QuirksMode::NoQuirks,
         }
     }

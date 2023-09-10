@@ -50,6 +50,10 @@ pub enum ParserError {
     UnexpectedQuestionMarkInsteadOfTagName,
     UnexpectedSolidusInTag,
     UnknownNamedCharacterReference,
+
+    ExpectedDocTypeButGotChars,
+    ExpectedDocTypeButGotStartTag,
+    ExpectedDocTypeButGotEndTag,
 }
 
 impl ParserError {
@@ -104,13 +108,17 @@ impl ParserError {
             ParserError::UnexpectedSolidusInTag => "unexpected-solidus-in-tag",
             ParserError::UnknownNamedCharacterReference => "unknown-named-character-reference",
             ParserError::AbruptClosingOfEmptyComment => "abrupt-closing-of-empty-comment",
+
+            ParserError::ExpectedDocTypeButGotChars => "expected-doctype-but-got-chars",
+            ParserError::ExpectedDocTypeButGotStartTag => "expected-doctype-but-got-start-tag",
+            ParserError::ExpectedDocTypeButGotEndTag => "expected-doctype-but-got-end-tag",
         }
     }
 }
 
 
 // Parser error that defines an error (message) on the given position
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub struct ParseError {
     pub message: String,  // Parse message
     pub line: usize,        // Line number of the error
@@ -118,12 +126,13 @@ pub struct ParseError {
     pub offset: usize,      // Position of the error on the line
 }
 
+#[derive(Clone)]
 pub struct ErrorLogger {
     errors: Vec<ParseError>,
 }
 
 impl ErrorLogger {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         ErrorLogger {
             errors: Vec::new(),
         }
@@ -131,8 +140,8 @@ impl ErrorLogger {
 }
 
 impl ErrorLogger {
-    pub fn get_errors(&self) -> &Vec<ParseError> {
-        &self.errors
+    pub fn get_errors(&self) -> Vec<ParseError> {
+        self.errors.clone()
     }
 
     pub fn add_error(&mut self, pos: Position, message: &str)
@@ -156,6 +165,6 @@ impl ErrorLogger {
             message: message.to_string()
         });
 
-        println!("Parse error ({}/{}): {}", pos.line, pos.col, message);
+        // println!("Parse error ({}/{}): {}", pos.line, pos.col, message);
     }
 }
