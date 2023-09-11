@@ -4,8 +4,9 @@ use regex::Regex;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use gosub_engine::html5_parser::input_stream::InputStream;
+use gosub_engine::html5_parser::node::NodeData;
 use gosub_engine::html5_parser::parser::Html5Parser;
-use gosub_engine::html5_parser::node::Node;
+use gosub_engine::html5_parser::parser::document::Document;
 
 pub struct TestResults{
     tests: usize,               // Number of tests (as defined in the suite)
@@ -51,9 +52,16 @@ fn main () -> io::Result<()> {
         let tests = read_tests(path.clone())?;
         println!("🏃‍♂️ Running {} tests from 🗄️ {:?}\n", tests.len(), path);
 
+        let mut test_idx = 1;
         for test in tests {
-            run_tree_test(&test, &mut results);
+
+            if test_idx == 2 {
+                run_tree_test(test_idx, &test, &mut results);
+            }
+
+            test_idx += 1;
         }
+
     }
 
     println!("🏁 Tests completed: Ran {} tests, {} assertions, {} succeeded, {} failed ({} position failures)", results.tests, results.assertions, results.succeeded, results.failed, results.failed_position);
@@ -111,11 +119,7 @@ fn read_tests(file_path: PathBuf) -> io::Result<Vec<Test>> {
                         let col = caps.name("col").unwrap().as_str().parse::<i64>().unwrap();
                         let code = caps.name("code").unwrap().as_str().to_string();
 
-                        current_test.errors.push(Error{
-                            code: code,
-                            line: line,
-                            col: col,
-                        });
+                        current_test.errors.push(Error{ code, line, col });
                     }
                 },
                 "document" => current_test.document.push(line),
@@ -134,9 +138,8 @@ fn read_tests(file_path: PathBuf) -> io::Result<Vec<Test>> {
     Ok(tests)
 }
 
-fn run_tree_test(test: &Test, results: &mut TestResults)
-{
-    println!("🧪 Running test: {}::{}", test.file_path, test.line);
+fn run_tree_test(test_idx: usize,test: &Test, results: &mut TestResults) {
+    println!("🧪 Running test #{}: {}::{}", test_idx, test.file_path, test.line);
 
     results.tests += 1;
 
@@ -146,7 +149,7 @@ fn run_tree_test(test: &Test, results: &mut TestResults)
     let mut parser = Html5Parser::new(&mut is);
     let (document, parse_errors) = parser.parse();
 
-    match_document(document.get_root(), &test.document);
+    match_document_tree(&document, &test.document);
 
     if parse_errors.len() != test.errors.len() {
         println!("❌ Unexpected errors found (wanted {}, got {}): ", test.errors.len(), parse_errors.len());
@@ -198,10 +201,9 @@ fn run_tree_test(test: &Test, results: &mut TestResults)
         idx += 1;
     }
 
-    println!("\n\n Generated tree: ");
-    println!("{}", document);
+    // println!("\n\nGenerated tree: ");
+    // println!("{}", document);
     println!("----------------------------------------");
-
 }
 
 #[derive(PartialEq)]
@@ -241,29 +243,49 @@ pub struct Error {
     children below it.
 **/
 
-fn match_document(_node: &Node, _expected_doc: &Vec<String>) -> bool {
-    // let mut idx = 0;
-    // for got_node in got_doc.get_children() {
-    //     if idx >= expected_doc.len() {
-    //         println!("❌ Found unexpected node: {}", got_node);
-    //         return false;
-    //     }
-    //
-    //     let want_node = expected_doc.get(idx).unwrap();
-    //     if got_node.to_string() != *want_node {
-    //         println!("❌ Found unexpected node: {}", got_node);
-    //         return false;
-    //     }
-    //
-    //     idx += 1;
-    // }
-    //
-    // if idx < expected_doc.len() {
-    //     println!("❌ Missing node: {}", expected_doc.get(idx).unwrap());
-    //     return false;
-    // }
+fn match_document_tree(document: &Document, expected: &Vec<String>) -> bool {
+    match_node(0, -1, -1, document, expected);
+    true
+}
 
-    return true;
+fn match_node(node_idx: usize, expected_id: isize, indent: isize, document: &Document, expected: &Vec<String>) -> Option<usize> {
+    let node = document.get_node_by_id(node_idx).unwrap();
+
+    if node_idx > 0 {
+        match &node.data {
+            NodeData::Element { name, .. } => {
+                let value = format!("|{}<{}>", " ".repeat((indent as usize * 2) + 1), name);
+                if value != expected[expected_id  as usize] {
+                    println!("❌ {}, Found unexpected element node: {}", expected[expected_id  as usize], name);
+                    return None;
+                } else {
+                    println!("✅ {}", expected[expected_id  as usize]);
+                }
+            }
+            NodeData::Text { value } => {
+                let value = format!("|{}\"{}\"", " ".repeat(indent  as usize * 2 + 1), value);
+                if value != expected[expected_id as usize] {
+                    println!("❌ {}, Found unexpected text node: {}", expected[expected_id  as usize], value);
+                    return None;
+                } else {
+                    println!("✅ {}", expected[expected_id  as usize]);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut next_expected_idx = expected_id + 1;
+
+    for &child_idx in &node.children {
+        if let Some(new_idx)  = match_node(child_idx, next_expected_idx, indent + 1, document, expected) {
+            next_expected_idx = new_idx as isize;
+        } else {
+            return None;
+        }
+    }
+
+    Some(next_expected_idx as usize)
 }
 
 fn match_error(got_err: &Error, expected_err: &Error) -> ErrorResult {

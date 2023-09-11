@@ -1265,7 +1265,7 @@ impl<'a> Html5Parser<'a> {
                 return Node::new_comment(value);
             }
             Token::TextToken { value } => {
-                return Node::new_text(format!("\"{}\"", value).as_str());
+                return Node::new_text(format!("{}", value).as_str());
             }
             Token::EofToken => {
                 panic!("EOF token not allowed");
