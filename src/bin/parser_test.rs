@@ -54,14 +54,12 @@ fn main () -> io::Result<()> {
 
         let mut test_idx = 1;
         for test in tests {
-
             if test_idx == 2 {
                 run_tree_test(test_idx, &test, &mut results);
             }
 
             test_idx += 1;
         }
-
     }
 
     println!("🏁 Tests completed: Ran {} tests, {} assertions, {} succeeded, {} failed ({} position failures)", results.tests, results.assertions, results.succeeded, results.failed, results.failed_position);
@@ -201,8 +199,6 @@ fn run_tree_test(test_idx: usize,test: &Test, results: &mut TestResults) {
         idx += 1;
     }
 
-    // println!("\n\nGenerated tree: ");
-    // println!("{}", document);
     println!("----------------------------------------");
 }
 

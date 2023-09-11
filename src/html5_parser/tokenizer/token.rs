@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use crate::html5_parser::tokenizer::CHAR_NUL;
 
 // The different tokens types that can be emitted by the tokenizer
@@ -29,10 +30,12 @@ pub enum Token {
     StartTagToken {
         name: String,
         is_self_closing: bool,
-        attributes: Vec<Attribute>,
+        attributes: HashMap<String, String>
     },
     EndTagToken {
         name: String,
+        is_self_closing: bool,
+        attributes: HashMap<String, String>
     },
     CommentToken {
         value: String,
@@ -103,8 +106,8 @@ impl std::fmt::Display for Token {
                 attributes,
             } => {
                 let mut result = format!("<{}", name);
-                for attr in attributes.iter() {
-                    result.push_str(&format!(" {}=\"{}\"", attr.name, attr.value));
+                for (key, value) in attributes.iter() {
+                    result.push_str(&format!(" {}=\"{}\"", key, value));
                 }
                 if *is_self_closing {
                     result.push_str(" /");
@@ -112,7 +115,7 @@ impl std::fmt::Display for Token {
                 result.push('>');
                 write!(f, "StartTag[{}]", result)
             }
-            Token::EndTagToken { name } => write!(f, "EndTag[</{}>]", name),
+            Token::EndTagToken { name, is_self_closing, .. } => write!(f, "EndTag[</{}{}>]", name, if *is_self_closing { "/" } else { "" }),
             Token::EofToken => write!(f, "EOF"),
         }
     }

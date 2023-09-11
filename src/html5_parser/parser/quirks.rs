@@ -1,5 +1,6 @@
 use crate::html5_parser::parser::Html5Parser;
 
+#[derive(PartialEq)]
 pub enum QuirksMode {
     Quirks,
     LimitedQuirks,

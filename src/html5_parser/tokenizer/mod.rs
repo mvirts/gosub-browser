@@ -6,13 +6,14 @@ mod character_reference;
 mod replacement_tables;
 
 use std::cell::{Ref, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use crate::html5_parser::error_logger::{ErrorLogger, ParserError};
 use crate::html5_parser::input_stream::{InputStream, Position};
 use crate::html5_parser::input_stream::Element;
 use crate::html5_parser::input_stream::SeekMode::SeekCur;
 use crate::html5_parser::tokenizer::state::State;
-use crate::html5_parser::tokenizer::token::{Attribute, Token};
+use crate::html5_parser::tokenizer::token::Token;
 
 // Constants that are not directly captured as visible chars
 pub const CHAR_NUL: char = '\u{0000}';
@@ -30,7 +31,7 @@ pub struct Tokenizer<'a> {
     pub consumed: Vec<char>,            // Current consumed characters for current token
     pub current_attr_name: String,      // Current attribute name that we need to store temporary in case we are parsing attributes
     pub current_attr_value: String,     // Current attribute value that we need to store temporary in case we are parsing attributes
-    pub current_attrs: Vec<Attribute>,  // Current attributes
+    pub current_attrs: HashMap<String, String>,  // Current attributes
     pub current_token: Option<Token>,   // Token that is currently in the making (if any)
     pub temporary_buffer: Vec<char>,    // Temporary buffer
     pub token_queue: Vec<Token>,        // Queue of emitted tokens. Needed because we can generate multiple tokens during iteration
@@ -204,7 +205,7 @@ impl<'a> Tokenizer<'a> {
             token_queue: vec![],
             current_attr_name: String::new(),
             current_attr_value: String::new(),
-            current_attrs: vec![],
+            current_attrs: HashMap::new(),
             temporary_buffer: vec![],
             error_logger: error_logger
         };
@@ -351,7 +352,7 @@ impl<'a> Tokenizer<'a> {
                             self.current_token = Some(Token::StartTagToken{
                                 name: "".into(),
                                 is_self_closing: false,
-                                attributes: vec![],
+                                attributes: HashMap::new(),
                             });
 
                             add_to_token_name!(self, to_lowercase!(ch));
@@ -361,7 +362,7 @@ impl<'a> Tokenizer<'a> {
                             self.current_token = Some(Token::StartTagToken{
                                 name: "".into(),
                                 is_self_closing: false,
-                                attributes: vec![],
+                                attributes: HashMap::new(),
                             });
 
                             add_to_token_name!(self, ch);
@@ -394,6 +395,8 @@ impl<'a> Tokenizer<'a> {
                         Element::Utf8(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
+                                is_self_closing: false,
+                                attributes: HashMap::new()
                             });
 
                             add_to_token_name!(self, to_lowercase!(ch));
@@ -402,6 +405,8 @@ impl<'a> Tokenizer<'a> {
                         Element::Utf8(ch @ 'a'..='z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
+                                is_self_closing: false,
+                                attributes: HashMap::new()
                             });
 
                             add_to_token_name!(self, ch);
@@ -472,6 +477,8 @@ impl<'a> Tokenizer<'a> {
                         Element::Utf8(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
+                                is_self_closing: false,
+                                attributes: HashMap::new()
                             });
                             self.temporary_buffer.push(to_lowercase!(ch));
                             self.state = State::RcDataEndTagNameState;
@@ -479,6 +486,8 @@ impl<'a> Tokenizer<'a> {
                         Element::Utf8(ch @ 'a'..='z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
+                                is_self_closing: false,
+                                attributes: HashMap::new()
                             });
                             self.temporary_buffer.push(ch);
                             self.state = State::RcDataEndTagNameState;
@@ -570,6 +579,8 @@ impl<'a> Tokenizer<'a> {
                         Element::Utf8(ch @ 'A'..='Z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
+                                is_self_closing: false,
+                                attributes: HashMap::new()
                             });
                             // add_to_token_name!(self, to_lowercase!(ch));
                             self.temporary_buffer.push(to_lowercase!(ch));
@@ -578,6 +589,8 @@ impl<'a> Tokenizer<'a> {
                         Element::Utf8(ch @ 'a'..='z') => {
                             self.current_token = Some(Token::EndTagToken{
                                 name: "".into(),
+                                is_self_closing: false,
+                                attributes: HashMap::new()
                             });
                             // add_to_token_name!(self, ch);
                             self.temporary_buffer.push(ch);
@@ -683,6 +696,8 @@ impl<'a> Tokenizer<'a> {
                     if c.utf8().is_ascii_alphabetic() {
                         self.current_token = Some(Token::EndTagToken{
                             name: "".into(),
+                            is_self_closing: false,
+                            attributes: HashMap::new()
                         });
 
                         self.stream.unread();
@@ -883,6 +898,8 @@ impl<'a> Tokenizer<'a> {
                     if c.is_utf8() && c.utf8().is_ascii_alphabetic() {
                         self.current_token = Some(Token::EndTagToken{
                             name: "".into(),
+                            is_self_closing: false,
+                            attributes: HashMap::new()
                         });
 
                         self.stream.unread();
@@ -2228,12 +2245,7 @@ impl<'a> Tokenizer<'a> {
     fn set_add_attribute_to_current_token(&mut self, name: String, value: String) {
         match &mut self.current_token.as_mut().unwrap() {
             Token::StartTagToken { attributes, .. } => {
-                attributes.push(
-                Attribute{
-                        name: name.clone(),
-                        value: value.clone(),
-                    }
-                );
+                attributes.insert(name.clone(), value.clone());
             }
             _ => {}
         }
@@ -2256,16 +2268,13 @@ impl<'a> Tokenizer<'a> {
 
     // This function checks to see if there is already an attribute name like the one in current_attr_name.
     fn attr_already_exists(&mut self) -> bool {
-        return self.current_attrs.iter().any(|attr| attr.name == self.current_attr_name);
+        return self.current_attrs.contains_key(&self.current_attr_name);
     }
 
     // Saves the current attribute name and value onto the current_attrs stack, if there is anything to store
     fn store_and_clear_current_attribute(&mut self) {
-        if !self.current_attr_name.is_empty() && ! self.attr_already_exists() {
-            self.current_attrs.push(Attribute{
-                name: self.current_attr_name.clone(),
-                value: self.current_attr_value.clone(),
-            });
+        if !self.current_attr_name.is_empty() && ! self.current_attrs.contains_key(&self.current_attr_name) {
+            self.current_attrs.insert(self.current_attr_name.clone(), self.current_attr_value.clone());
         }
 
         self.current_attr_name = String::new();
@@ -2286,15 +2295,10 @@ impl<'a> Tokenizer<'a> {
                 self.parse_error(ParserError::EndTagWithAttributes);
             },
             Token::StartTagToken { attributes, .. } => {
-                for attr in &self.current_attrs {
-                    attributes.push(
-                        Attribute{
-                            name: attr.name.clone(),
-                            value: attr.value.clone(),
-                        }
-                    );
+                for (key, value) in &self.current_attrs {
+                    attributes.insert(key.clone(), value.clone());
                 }
-                self.current_attrs = vec![];
+                self.current_attrs = HashMap::new();
             }
             _ => {},
         }

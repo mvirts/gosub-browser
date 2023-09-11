@@ -73,8 +73,8 @@ impl Document {
             },
             NodeData::Element { name, attributes } => {
                 write!(f, "{}<{}", prefix, name)?;
-                for attr in attributes.iter() {
-                    write!(f, " {}={}", attr.name, attr.value)?;
+                for (key, value) in attributes.iter() {
+                    write!(f, " {}={}", key, value)?;
                 }
                 writeln!(f, ">")?;
             },

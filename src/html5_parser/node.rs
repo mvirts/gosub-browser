@@ -1,4 +1,4 @@
-use crate::html5_parser::tokenizer::token::Attribute;
+use std::collections::HashMap;
 
 #[derive(Debug, PartialEq)]
 pub enum NodeType {
@@ -12,7 +12,7 @@ pub enum NodeData {
     Document,
     Text { value: String },
     Comment { value: String },
-    Element { name: String, attributes: Vec<Attribute> },
+    Element { name: String, attributes: HashMap<String, String> },
 }
 
 pub struct Node {
@@ -34,7 +34,7 @@ impl Node {
         }
     }
 
-    pub fn new_element(name: &str, attributes: Vec<Attribute>) -> Self {
+    pub fn new_element(name: &str, attributes: HashMap<String, String>) -> Self {
         Node {
             id: 0,
             parent: None,
