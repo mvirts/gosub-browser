@@ -2157,7 +2157,9 @@ impl<'a> Html5Parser<'a> {
         }
     }
 
-    fn handle_in_template(&mut self) {}
+    fn handle_in_template(&mut self) {
+        todo!()
+    }
 
     fn handle_in_table(&mut self) {
         let mut anything_else = false;
@@ -2377,9 +2379,11 @@ impl<'a> Html5Parser<'a> {
     fn run_adoption_agency(&mut self) {
         todo!()
     }
+
     fn adjust_svg_attributes(&mut self) {
         todo!()
     }
+
     fn adjust_foreign_attributes(&mut self) {
         todo!()
     }
@@ -2387,9 +2391,11 @@ impl<'a> Html5Parser<'a> {
     fn insert_foreign_element(&mut self) {
         todo!()
     }
+
     fn parse_raw_data(&mut self) {
         todo!()
     }
+
     fn adjust_mathml_attributes(&mut self) {
         todo!()
     }

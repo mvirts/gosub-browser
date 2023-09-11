@@ -141,6 +141,8 @@ fn run_tree_test(test_idx: usize,test: &Test, results: &mut TestResults) {
 
     results.tests += 1;
 
+    let old_failed = results.failed;
+
     let mut is = InputStream::new();
     is.read_from_str(test.data.as_str(), None);
 
@@ -197,6 +199,20 @@ fn run_tree_test(test_idx: usize,test: &Test, results: &mut TestResults) {
         }
 
         idx += 1;
+    }
+
+    if old_failed != results.failed {
+        println!("----------------------------------------");
+        println!("📄 Input stream: ");
+        println!("{}", test.data);
+        println!("----------------------------------------");
+        println!("🌳 Generated tree: ");
+        println!("{}", document);
+        println!("----------------------------------------");
+        println!("🌳 Expected tree: ");
+        for line in &test.document {
+            println!("{}", line);
+        }
     }
 
     println!("----------------------------------------");
