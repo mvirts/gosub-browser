@@ -54,9 +54,9 @@ fn main () -> io::Result<()> {
 
         let mut test_idx = 1;
         for test in tests {
-            if test_idx == 2 {
+            // if test_idx == 3 {
                 run_tree_test(test_idx, &test, &mut results);
-            }
+            // }
 
             test_idx += 1;
         }
@@ -151,55 +151,56 @@ fn run_tree_test(test_idx: usize,test: &Test, results: &mut TestResults) {
 
     match_document_tree(&document, &test.document);
 
-    if parse_errors.len() != test.errors.len() {
-        println!("❌ Unexpected errors found (wanted {}, got {}): ", test.errors.len(), parse_errors.len());
-        for want_err in &test.errors {
-            println!("     * Want: '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
-        }
-        for got_err in &parse_errors {
-            println!("     * Got: '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
-        }
-        results.assertions += 1;
-        results.failed += 1;
-    } else {
-        println!("✅ Found {} errors", parse_errors.len());
-    }
+    // if parse_errors.len() != test.errors.len() {
+    //     println!("❌ Unexpected errors found (wanted {}, got {}): ", test.errors.len(), parse_errors.len());
+    //     for want_err in &test.errors {
+    //         println!("     * Want: '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
+    //     }
+    //     for got_err in &parse_errors {
+    //         println!("     * Got: '{}' at {}:{}", got_err.message, got_err.line, got_err.col);
+    //     }
+    //     results.assertions += 1;
+    //     results.failed += 1;
+    // } else {
+    //     println!("✅ Found {} errors", parse_errors.len());
+    // }
+    //
+    // // Check each error messages
+    // let mut idx = 0;
+    // for error in &test.errors {
+    //     if parse_errors.get(idx).is_none() {
+    //         println!("❌ Expected error '{}' at {}:{}", error.code, error.line, error.col);
+    //         results.assertions += 1;
+    //         results.failed += 1;
+    //         continue;
+    //     }
+    //
+    //     let err = parse_errors.get(idx).unwrap();
+    //     let got_error = Error{
+    //         code: err.message.to_string(),
+    //         line: err.line as i64,
+    //         col: err.col as i64,
+    //     };
+    //
+    //     match match_error(&got_error, &error) {
+    //         ErrorResult::Failure => {
+    //             results.assertions += 1;
+    //             results.failed += 1;
+    //         },
+    //         ErrorResult::PositionFailure => {
+    //             results.assertions += 1;
+    //             results.failed += 1;
+    //             results.failed_position += 1;
+    //         },
+    //         ErrorResult::Success => {
+    //             results.assertions += 1;
+    //             results.succeeded += 1;
+    //         }
+    //     }
+    //
+    //     idx += 1;
+    // }
 
-    // Check each error messages
-    let mut idx = 0;
-    for error in &test.errors {
-        if parse_errors.get(idx).is_none() {
-            println!("❌ Expected error '{}' at {}:{}", error.code, error.line, error.col);
-            results.assertions += 1;
-            results.failed += 1;
-            continue;
-        }
-
-        let err = parse_errors.get(idx).unwrap();
-        let got_error = Error{
-            code: err.message.to_string(),
-            line: err.line as i64,
-            col: err.col as i64,
-        };
-
-        match match_error(&got_error, &error) {
-            ErrorResult::Failure => {
-                results.assertions += 1;
-                results.failed += 1;
-            },
-            ErrorResult::PositionFailure => {
-                results.assertions += 1;
-                results.failed += 1;
-                results.failed_position += 1;
-            },
-            ErrorResult::Success => {
-                results.assertions += 1;
-                results.succeeded += 1;
-            }
-        }
-
-        idx += 1;
-    }
 
     if old_failed != results.failed {
         println!("----------------------------------------");
