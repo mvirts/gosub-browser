@@ -1,5 +1,13 @@
 use std::collections::HashMap;
 
+pub const HTML_NAMESPACE:    &str = "http://www.w3.org/1999/xhtml";
+pub const MATHML_NAMESPACE:  &str = "http://www.w3.org/1998/Math/MathML";
+pub const SVG_NAMESPACE:     &str = "http://www.w3.org/2000/svg";
+pub const XLINK_NAMESPACE:   &str = "http://www.w3.org/1999/xlink";
+pub const XML_NAMESPACE:     &str = "http://www.w3.org/XML/1998/namespace";
+pub const XMLNS_NAMESPACE:   &str = "http://www.w3.org/2000/xmlns/";
+
+
 #[derive(Debug, PartialEq)]
 pub enum NodeType {
     Document,
@@ -20,8 +28,10 @@ pub struct Node {
     pub parent: Option<usize>,      // parent of the node, if any
     pub children: Vec<usize>,       // children of the node
     pub name: String,               // name of the node, or empty when its not a tag
+    pub namespace: Option<String>,  // namespace of the node
     pub data: NodeData,             // actual data of the node
 }
+
 
 impl Node {
     pub fn new_document() -> Self {
@@ -31,10 +41,11 @@ impl Node {
             children: vec![],
             data: NodeData::Document{},
             name: "".to_string(),
+            namespace: None,
         }
     }
 
-    pub fn new_element(name: &str, attributes: HashMap<String, String>) -> Self {
+    pub fn new_element(name: &str, attributes: HashMap<String, String>, namespace: &str) -> Self {
         Node {
             id: 0,
             parent: None,
@@ -44,6 +55,7 @@ impl Node {
                 attributes: attributes,
             },
             name: name.to_string(),
+            namespace: Some(namespace.into())
         }
     }
 
@@ -56,6 +68,7 @@ impl Node {
                 value: value.to_string(),
             },
             name: "".to_string(),
+            namespace: None,
         }
     }
 
@@ -68,6 +81,7 @@ impl Node {
                 value: value.to_string(),
             },
             name: "".to_string(),
+            namespace: None,
         }
     }
 }
