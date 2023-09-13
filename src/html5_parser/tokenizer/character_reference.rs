@@ -105,7 +105,7 @@ impl<'a> Tokenizer<'a> {
 
                         if entity.chars().last().unwrap() != ';' {
                             // We need to return the position where we expected the ';'
-                            self.stream.read_char();    // @TODO: We can't use skip, as this might interfere with EOF stuff (fix it)
+                            self.stream.read_char();    // We can't use skip, as this might interfere with EOF stuff (fix it)
                             self.parse_error(ParserError::MissingSemicolonAfterCharacterReference);
                             self.stream.unread();
                         }
