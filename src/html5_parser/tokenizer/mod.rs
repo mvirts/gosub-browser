@@ -1,7 +1,6 @@
 pub mod token;
 pub mod state;
 
-mod emitter;
 mod character_reference;
 mod replacement_tables;
 

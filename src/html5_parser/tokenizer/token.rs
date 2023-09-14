@@ -139,3 +139,121 @@ impl TokenTrait for Token {
         }
     }
 }
+
+#[cfg(test)]
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_token_type() {
+        let token = Token::DocTypeToken {
+            name: None,
+            force_quirks: false,
+            pub_identifier: None,
+            sys_identifier: None,
+        };
+        assert_eq!(token.type_of(), TokenType::DocTypeToken);
+    }
+
+    #[test]
+    fn test_token_is_null() {
+        let token = Token::TextToken {
+            value: "Hello\0World".to_string(),
+        };
+        assert!(token.is_null());
+    }
+
+    #[test]
+    fn test_token_is_eof() {
+        let token = Token::EofToken;
+        assert!(token.is_eof());
+    }
+
+    #[test]
+    fn test_token_is_empty_or_white() {
+        let token = Token::TextToken {
+            value: "   ".to_string(),
+        };
+        assert!(token.is_empty_or_white());
+    }
+
+    #[test]
+    fn test_token_display() {
+        let token = Token::DocTypeToken {
+            name: Some("html".to_string()),
+            force_quirks: false,
+            pub_identifier: None,
+            sys_identifier: None,
+        };
+        assert_eq!(format!("{}", token), "<!DOCTYPE html />");
+
+        let token = Token::DocTypeToken {
+            name: Some("html".to_string()),
+            force_quirks: false,
+            pub_identifier: Some("foo".to_string()),
+            sys_identifier: Some("bar".to_string()),
+        };
+        assert_eq!(format!("{}", token), "<!DOCTYPE html />");
+
+    }
+
+    #[test]
+    fn test_token_display_comment() {
+        let token = Token::CommentToken {
+            value: "Hello World".to_string(),
+        };
+        assert_eq!(format!("{}", token), "Comment[<!-- Hello World -->]");
+    }
+
+    #[test]
+    fn test_token_display_text() {
+        let token = Token::TextToken {
+            value: "Hello World".to_string(),
+        };
+        assert_eq!(format!("{}", token), "Text[Hello World]");
+    }
+
+    #[test]
+    fn test_token_display_start_tag() {
+        let token = Token::StartTagToken {
+            name: "html".to_string(),
+            is_self_closing: false,
+            attributes: HashMap::new(),
+        };
+        assert_eq!(format!("{}", token), "StartTag[<html>]");
+
+        let mut attributes = HashMap::new();
+        attributes.insert("foo".to_string(), "bar".to_string());
+
+        let token = Token::StartTagToken {
+            name: "html".to_string(),
+            is_self_closing: false,
+            attributes,
+        };
+        assert_eq!(format!("{}", token), "StartTag[<html foo=\"bar\">]");
+
+        let token = Token::StartTagToken {
+            name: "br".to_string(),
+            is_self_closing: true,
+            attributes: HashMap::new(),
+        };
+        assert_eq!(format!("{}", token), "StartTag[<br/>]");
+    }
+
+    #[test]
+    fn test_token_display_end_tag() {
+        let token = Token::EndTagToken {
+            name: "html".to_string(),
+            is_self_closing: false,
+            attributes: HashMap::new(),
+        };
+        assert_eq!(format!("{}", token), "EndTag[</html>]");
+    }
+
+    #[test]
+    fn test_token_display_eof() {
+        let token = Token::EofToken;
+        assert_eq!(format!("{}", token), "EOF");
+    }
+}

@@ -4,7 +4,7 @@ pub struct ShadowRoot {
     pub mode: ShadowRootMode,
     pub delegates_focus: bool,
     pub slot_assignment: SlotAssignmentMode,
-    pub host: Element,
+    pub host: Box<Element>,
     // pub onslotchange: Option<EventHandler>,
 }
 
@@ -28,11 +28,11 @@ pub struct Element {
     pub class_list: Vec<String>,
     pub slot: String,
     pub attributes: HashMap<String, String>,
-    pub shadow_root: Option<ShadowRoot>,
+    pub shadow_root: Option<Box<ShadowRoot>>,
 }
 
 pub struct HtmlElement {
-    // Element
+    // Element fields
     pub namespace_uri: Option<String>,
     pub prefix: Option<String>,
     pub local_name: String,

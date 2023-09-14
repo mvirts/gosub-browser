@@ -7,7 +7,7 @@ pub const XLINK_NAMESPACE:   &str = "http://www.w3.org/1999/xlink";
 pub const XML_NAMESPACE:     &str = "http://www.w3.org/XML/1998/namespace";
 pub const XMLNS_NAMESPACE:   &str = "http://www.w3.org/2000/xmlns/";
 
-
+// Different types of nodes
 #[derive(Debug, PartialEq)]
 pub enum NodeType {
     Document,
@@ -16,6 +16,8 @@ pub enum NodeType {
     Element,
 }
 
+// Different type of node data
+#[derive(Debug, PartialEq)]
 pub enum NodeData {
     Document,
     Text { value: String },
@@ -23,17 +25,19 @@ pub enum NodeData {
     Element { name: String, attributes: HashMap<String, String> },
 }
 
+// Node that resembles a DOM node
 pub struct Node {
     pub id: usize,                  // ID of the node, 0 is always the root / document node
     pub parent: Option<usize>,      // parent of the node, if any
     pub children: Vec<usize>,       // children of the node
-    pub name: String,               // name of the node, or empty when its not a tag
+    pub name: String,               // name of the node, or empty when it's not a tag
     pub namespace: Option<String>,  // namespace of the node
     pub data: NodeData,             // actual data of the node
 }
 
 
 impl Node {
+    // Create a new document node
     pub fn new_document() -> Self {
         Node {
             id: 0,
@@ -45,6 +49,7 @@ impl Node {
         }
     }
 
+    // Create a new element node with the given name and attributes and namespace
     pub fn new_element(name: &str, attributes: HashMap<String, String>, namespace: &str) -> Self {
         Node {
             id: 0,
@@ -59,6 +64,7 @@ impl Node {
         }
     }
 
+    // Create a new comment node
     pub fn new_comment(value: &str) -> Self {
         Node {
             id: 0,
@@ -72,6 +78,7 @@ impl Node {
         }
     }
 
+    // Create a new text node
     pub fn new_text(value: &str) -> Self {
         Node {
             id: 0,
@@ -85,7 +92,7 @@ impl Node {
         }
     }
 
-
+    // Returns true if the given node is "special" node based on the namespace and name
     pub fn is_special(&self) -> bool {
         if self.namespace == Some(HTML_NAMESPACE.into()) {
             if SPECIAL_HTML_ELEMENTS.contains(&self.name.as_str()) {
@@ -149,21 +156,175 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_nodes() {
-        let mut n = Node::new("foo");
-        assert_eq!(n.value, "foo");
-        assert_eq!(n.children.len(), 0);
+    fn test_new_document() {
+        let node = Node::new_document();
+        assert_eq!(node.id, 0);
+        assert_eq!(node.parent, None);
+        assert_eq!(node.children, vec![]);
+        assert_eq!(node.name, "".to_string());
+        assert_eq!(node.namespace, None);
+        assert_eq!(node.data, NodeData::Document {});
+    }
 
-        let n2 = Node::new("bar");
-        let n3 = Node::new("baz");
-        n.add_child(n2);
-        n.add_child(n3);
-        assert_eq!(n.children.len(), 2);
+    #[test]
+    fn test_new_element() {
+        let mut attributes = HashMap::new();
+        attributes.insert("id".to_string(), "test".to_string());
+        let node = Node::new_element("div", attributes, HTML_NAMESPACE);
+        assert_eq!(node.id, 0);
+        assert_eq!(node.parent, None);
+        assert_eq!(node.children, vec![]);
+        assert_eq!(node.name, "div".to_string());
+        assert_eq!(node.namespace, Some(HTML_NAMESPACE.into()));
+        assert_eq!(node.data, NodeData::Element {
+            name: "div".to_string(),
+            attributes: attributes,
+        });
+    }
 
-        assert_eq!(n.children[0].value, "bar");
-        assert_eq!(n.children[0].children.len(), 0);
+    #[test]
+    fn test_new_comment() {
+        let node = Node::new_comment("test");
+        assert_eq!(node.id, 0);
+        assert_eq!(node.parent, None);
+        assert_eq!(node.children, vec![]);
+        assert_eq!(node.name, "".to_string());
+        assert_eq!(node.namespace, None);
+        assert_eq!(node.data, NodeData::Comment {
+            value: "test".to_string(),
+        });
+    }
 
-        assert_eq!(n.children[1].value, "baz");
-        assert_eq!(n.children[1].children.len(), 0);
+    #[test]
+    fn test_new_text() {
+        let node = Node::new_text("test");
+        assert_eq!(node.id, 0);
+        assert_eq!(node.parent, None);
+        assert_eq!(node.children, vec![]);
+        assert_eq!(node.name, "".to_string());
+        assert_eq!(node.namespace, None);
+        assert_eq!(node.data, NodeData::Text {
+            value: "test".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_is_special() {
+        let mut attributes = HashMap::new();
+        attributes.insert("id".to_string(), "test".to_string());
+        let node = Node::new_element("div", attributes, HTML_NAMESPACE);
+        assert_eq!(node.is_special(), true);
+    }
+
+    #[test]
+    fn test_type_of() {
+        let node = Node::new_document();
+        assert_eq!(node.type_of(), NodeType::Document);
+        let node = Node::new_text("test");
+        assert_eq!(node.type_of(), NodeType::Text);
+        let node = Node::new_comment("test");
+        assert_eq!(node.type_of(), NodeType::Comment);
+        let mut attributes = HashMap::new();
+        attributes.insert("id".to_string(), "test".to_string());
+        let node = Node::new_element("div", attributes, HTML_NAMESPACE);
+        assert_eq!(node.type_of(), NodeType::Element);
+    }
+
+    #[test]
+    fn test_special_html_elements() {
+        for element in SPECIAL_HTML_ELEMENTS.iter() {
+            let mut attributes = HashMap::new();
+            attributes.insert("id".to_string(), "test".to_string());
+            let node = Node::new_element(element, attributes, HTML_NAMESPACE);
+            assert_eq!(node.is_special(), true);
+        }
+    }
+
+    #[test]
+    fn test_special_mathml_elements() {
+        for element in SPECIAL_MATHML_ELEMENTS.iter() {
+            let mut attributes = HashMap::new();
+            attributes.insert("id".to_string(), "test".to_string());
+            let node = Node::new_element(element, attributes, MATHML_NAMESPACE);
+            assert_eq!(node.is_special(), true);
+        }
+    }
+
+    #[test]
+    fn test_special_svg_elements() {
+        for element in SPECIAL_SVG_ELEMENTS.iter() {
+            let mut attributes = HashMap::new();
+            attributes.insert("id".to_string(), "test".to_string());
+            let node = Node::new_element(element, attributes, SVG_NAMESPACE);
+            assert_eq!(node.is_special(), true);
+        }
+    }
+
+    #[test]
+    fn test_type_of_node() {
+        let node = Node::new_document();
+        assert_eq!(node.type_of(), NodeType::Document);
+        let node = Node::new_text("test");
+        assert_eq!(node.type_of(), NodeType::Text);
+        let node = Node::new_comment("test");
+        assert_eq!(node.type_of(), NodeType::Comment);
+        let mut attributes = HashMap::new();
+        attributes.insert("id".to_string(), "test".to_string());
+        let node = Node::new_element("div", attributes, HTML_NAMESPACE);
+        assert_eq!(node.type_of(), NodeType::Element);
+    }
+
+    #[test]
+    fn test_type_of_node_data() {
+        let node = Node::new_document();
+        assert_eq!(node.data, NodeData::Document {});
+        let node = Node::new_text("test");
+        assert_eq!(node.data, NodeData::Text {
+            value: "test".to_string(),
+        });
+        let node = Node::new_comment("test");
+        assert_eq!(node.data, NodeData::Comment {
+            value: "test".to_string(),
+        });
+        let mut attributes = HashMap::new();
+        attributes.insert("id".to_string(), "test".to_string());
+        let node = Node::new_element("div", attributes, HTML_NAMESPACE);
+        assert_eq!(node.data, NodeData::Element {
+            name: "div".to_string(),
+            attributes: attributes,
+        });
+    }
+
+    #[test]
+    fn test_type_of_node_data_element() {
+        let mut attributes = HashMap::new();
+        attributes.insert("id".to_string(), "test".to_string());
+        let node = Node::new_element("div", attributes, HTML_NAMESPACE);
+        assert_eq!(node.data, NodeData::Element {
+            name: "div".to_string(),
+            attributes: attributes,
+        });
+    }
+
+    #[test]
+    fn test_type_of_node_data_text() {
+        let node = Node::new_text("test");
+        assert_eq!(node.data, NodeData::Text {
+            value: "test".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_type_of_node_data_comment() {
+        let node = Node::new_comment("test");
+        assert_eq!(node.data, NodeData::Comment {
+            value: "test".to_string(),
+        });
+    }
+
+    #[test]
+    fn test_type_of_node_data_document() {
+        let node = Node::new_document();
+        assert_eq!(node.data, NodeData::Document {});
     }
 }

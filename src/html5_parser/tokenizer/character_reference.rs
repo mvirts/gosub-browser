@@ -347,7 +347,10 @@ lazy_static! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::rc::Rc;
+    use std::cell::RefCell;
     use crate::html5_parser::input_stream::InputStream;
+    use crate::html5_parser::error_logger::ErrorLogger;
 
     macro_rules! entity_tests {
         ($($name:ident : $value:expr)*) => {
@@ -358,9 +361,12 @@ mod tests {
 
                     let mut is = InputStream::new();
                     is.read_from_str(input, None);
-                    let mut tok = Tokenizer::new(&mut is, None);
-                    let t = tok.next_token();
-                    assert_eq!(expected, t.to_string());
+
+                    let error_logger = Rc::new(RefCell::new(ErrorLogger::new()));
+                    let mut tokenizer = Tokenizer::new(&mut is, None, error_logger.clone());
+
+                    let token = tokenizer.next_token();
+                    assert_eq!(expected, token.to_string());
                 }
             )*
         }

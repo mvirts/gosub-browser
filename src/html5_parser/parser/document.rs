@@ -96,4 +96,67 @@ impl fmt::Display for Document {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use crate::html5_parser::node::HTML_NAMESPACE;
 
+    #[test]
+    fn test_document() {
+        let mut document = super::Document::new();
+        let root_id = document.get_root().id;
+        let html_id = document.add_node(super::Node::new_element("html", HashMap::new(), HTML_NAMESPACE), root_id);
+        let head_id = document.add_node(super::Node::new_element("head", HashMap::new(), HTML_NAMESPACE), html_id);
+        let body_id = document.add_node(super::Node::new_element("body", HashMap::new(), HTML_NAMESPACE), html_id);
+        let title_id = document.add_node(super::Node::new_element("title", HashMap::new(), HTML_NAMESPACE), head_id);
+        let title_text_id = document.add_node(super::Node::new_text("Hello world"), title_id);
+        let p_id = document.add_node(super::Node::new_element("p", HashMap::new(), HTML_NAMESPACE), body_id);
+        let p_text_id = document.add_node(super::Node::new_text("This is a paragraph"), p_id);
+        let p_comment_id = document.add_node(super::Node::new_comment("This is a comment"), p_id);
+        let p_text2_id = document.add_node(super::Node::new_text("This is another paragraph"), p_id);
+        let p_text3_id = document.add_node(super::Node::new_text("This is a third paragraph"), p_id);
+        let p_text4_id = document.add_node(super::Node::new_text("This is a fourth paragraph"), p_id);
+        let p_text5_id = document.add_node(super::Node::new_text("This is a fifth paragraph"), p_id);
+        let p_text6_id = document.add_node(super::Node::new_text("This is a sixth paragraph"), p_id);
+        let p_text7_id = document.add_node(super::Node::new_text("This is a seventh paragraph"), p_id);
+        let p_text8_id = document.add_node(super::Node::new_text("This is a eighth paragraph"), p_id);
+        let p_text9_id = document.add_node(super::Node::new_text("This is a ninth paragraph"), p_id);
+
+        document.reattach(p_text9_id, p_id);
+        document.reattach(p_text8_id, p_id);
+        document.reattach(p_text7_id, p_id);
+        document.reattach(p_text6_id, p_id);
+        document.reattach(p_text5_id, p_id);
+        document.reattach(p_text4_id, p_id);
+        document.reattach(p_text3_id, p_id);
+        document.reattach(p_text2_id, p_id);
+        document.reattach(p_comment_id, p_id);
+        document.reattach(p_text_id, p_id);
+        document.reattach(p_id, body_id);
+        document.reattach(title_text_id, title_id);
+        document.reattach(title_id, head_id);
+        document.reattach(head_id, html_id);
+        document.reattach(body_id, html_id);
+        document.reattach(html_id, root_id);
+
+        assert_eq!(format!("{}", document), r#"Document
+        └─ <html>
+            └─ <head>
+                └─ <title>
+                └─ Hello world
+            └─ <body>
+                └─ <p>
+                └─ This is a paragraph
+                └─ <!-- This is a comment -->
+                └─ This is another paragraph
+                └─ This is a third paragraph
+                └─ This is a fourth paragraph
+                └─ This is a fifth paragraph
+                └─ This is a sixth paragraph
+                └─ This is a seventh paragraph
+                └─ This is a eighth paragraph
+                └─ This is a ninth paragraph
+        "#);
+    }
+
+}
