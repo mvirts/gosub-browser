@@ -1,5 +1,5 @@
-mod quirks;
 pub mod document;
+mod quirks;
 mod attr_replacements;
 
 // ------------------------------------------------------------
@@ -157,6 +157,9 @@ macro_rules! current_node_mut {
         }
     };
 }
+
+#[macro_use]
+mod adoption_agency;
 
 // Active formatting elements, which could be a regular node(id), or a marker
 #[derive(PartialEq)]
@@ -2441,189 +2444,6 @@ impl<'a> Html5Parser<'a> {
         pop_until!(self, "p");
     }
 
-    // The adoption agency algorithm
-    fn run_adoption_agency(&mut self, token: &Token) {
-        // Step 1
-        let subject = match token {
-            Token::EndTagToken { name, .. } => *name,
-            _ => panic!("run adoption agency called with non end tag token"),
-        };
-
-        // Step 2
-        let current_node_id = current_node!(self).id;
-        if current_node!(self).name == subject && self.active_formatting_elements.iter().any(|&elem| elem == ActiveElement::Node(current_node_id)) {
-            self.open_elements.pop();
-            return;
-        }
-
-        // Step 3
-        let mut outer_loop_counter = 0;
-
-        // Step 4
-        loop {
-            // Step 4.1
-            if outer_loop_counter >= 8 {
-                return;
-            }
-
-            // Step 4.2
-            outer_loop_counter += 1;
-
-            // Step 4.3
-            let mut formatting_element_idx: usize = 0;
-            let mut formatting_element = None;
-            for idx in (0..self.active_formatting_elements.len()).rev() {
-                match self.active_formatting_elements[idx] {
-                    ActiveElement::Marker => break,
-                    ActiveElement::Node(node_id) => {
-                        let node = self.document.get_node_by_id(node_id).unwrap();
-                        if node.name == subject {
-                            formatting_element_idx = idx;
-                            formatting_element = Some(node);
-                        }
-                    }
-                }
-            }
-
-            if formatting_element_idx == 0 {
-                // @TODO: process as any other end tag
-                return;
-            }
-
-            let formatting_element = formatting_element.unwrap();
-
-            // Step 4.4
-            if ! open_elements_has!(self, formatting_element.name) {
-                self.parse_error("formatting element not in open elements");
-                self.active_formatting_elements.remove(formatting_element_idx);
-                return;
-            }
-
-            // Step 4.5
-            if open_elements_has!(self, formatting_element.name) && ! self.in_scope(&formatting_element.name, Scope::Regular) {
-                self.parse_error("formatting element not in scope");
-                return;
-            }
-
-            // Step 4.6
-            if formatting_element.id != current_node_id {
-                self.parse_error("formatting element not current node");
-                // do not return here
-            }
-
-            // Step 4.7
-            let mut furthest_block_idx = 0;
-            let mut furthest_block = None;
-            for idx in (0..formatting_element_idx).rev() {
-                match self.active_formatting_elements[idx] {
-                    ActiveElement::Marker => {},
-                    ActiveElement::Node(node_id) => {
-                        let node = self.document.get_node_by_id(node_id).unwrap();
-                        if node.is_special() {
-                            furthest_block_idx = idx;
-                            furthest_block = Some(&node);
-                        }
-                    }
-                }
-            }
-
-            // Step 4.8
-            if furthest_block_idx == 0 {
-                while current_node!(self).id != formatting_element.id {
-                    self.open_elements.pop();
-                }
-                self.active_formatting_elements.remove(formatting_element_idx);
-                return;
-            }
-
-            // Step 4.9
-            let mut common_ancestor_idx = formatting_element_idx - 1;
-            let mut common_ancestor = self.open_elements.get(common_ancestor_idx).expect("common ancestor not found");
-
-            // Step 4.10
-            let mut bookmark = formatting_element_idx;
-
-            // Step 4.11
-            let mut node_idx = furthest_block_idx;
-            let mut last_node_idx = furthest_block_idx;
-            let mut last_node = self.open_elements.get(last_node_idx).expect("last node not found");
-
-            // Step 4.12
-            let mut inner_loop_counter = 0;
-
-            // Step 4.13
-            loop {
-                // Step 4.13.1
-                inner_loop_counter += 1;
-
-                // Step 4.13.2
-                let &node_idx = self.open_elements.get(node_idx - 1).expect("node not found");
-                let mut node = open_elements_get!(self, node_idx);
-
-                // Step 4.13.3
-                if node.id == formatting_element.id {
-                    break;
-                }
-
-                // Step 4.13.4
-                if inner_loop_counter > 3 && self.active_formatting_elements.contains(&ActiveElement::Node(node.id)) {
-                    self.active_formatting_elements.remove(node_idx);
-                    break;
-                }
-
-                // Step 4.13.5
-                if ! self.active_formatting_elements.contains(&ActiveElement::Node(node.id)) {
-                    self.open_elements.remove(node_idx);
-                    continue;
-                }
-
-                // Step 4.13.6
-                let node = self.create_node(&Token::StartTagToken { name: node.name.clone(), attributes: node.attributes.clone(), is_self_closing: false }, HTML_NAMESPACE);
-                let node_id = self.document.add_node(node, common_ancestor.id);
-                self.active_formatting_elements[node_idx] = ActiveElement::Node(node_id);
-                self.open_elements[node_idx] = node_id;
-
-                // Step 4.13.7
-                if last_node_idx == furthest_block_idx {
-                    bookmark = node_idx + 1;
-                }
-
-                // Step 4.13.8
-                self.document.add_node(node, last_node.id);
-
-                // Step 4.13.9
-                // last_node_idx = node.id;
-                last_node = &node;
-            }
-
-            // Step 4.14
-            // Insert whatever last node ended up being in the previous step at the appropriate place for inserting a node, but using common ancestor as the override target.
-
-            // Step 4.15
-            let new_element = self.create_node(&Token::StartTagToken { name: formatting_element.name.clone(), attributes: formatting_element.attributes.clone(), is_self_closing: false }, HTML_NAMESPACE);
-
-            // Step 4.16
-            match *furthest_block {
-                Some(node) => {
-                    for child in node.children.iter() {
-                        new_element.add_child(child.clone());
-                    }
-                },
-                None => {}
-            }
-
-            // Step 4.17
-            self.document.add_node(new_element, furthest_block.id);
-
-            // Step 4.18
-            self.active_formatting_elements.remove(formatting_element_idx);
-            self.active_formatting_elements.insert(bookmark, ActiveElement::Node(new_element.id));
-
-            // Step 4.19
-            // Remove formatting element from the stack of open elements, and insert the new element into the stack of open elements immediately below the position of furthest block in that stack.
-        }
-    }
-
     // Adjusts attributes names in the given token for SVG
     fn adjust_svg_attributes(&self, token: &mut Token) {
         match token {
@@ -2756,4 +2576,5 @@ impl<'a> Html5Parser<'a> {
 
         return adjusted_insertion_location;
     }
+
 }

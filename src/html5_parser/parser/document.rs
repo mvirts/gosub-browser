@@ -43,10 +43,14 @@ impl Document {
         node_id
     }
 
-    // Reattach a node to another parent
-    pub fn reattach(&mut self, node_id: usize, parent_id: usize) {
+    pub fn append(&mut self, node_id: usize, parent_id: usize) {
         self.arena.attach_node(parent_id, node_id);
     }
+
+    // // append a node to another parent
+    // pub fn append(&mut self, node_id: usize, parent_id: usize) {
+    //     self.arena.attach_node(parent_id, node_id);
+    // }
 
     // return the root node
     pub fn get_root(&self) -> &Node {
@@ -122,22 +126,22 @@ mod tests {
         let p_text8_id = document.add_node(super::Node::new_text("This is a eighth paragraph"), p_id);
         let p_text9_id = document.add_node(super::Node::new_text("This is a ninth paragraph"), p_id);
 
-        document.reattach(p_text9_id, p_id);
-        document.reattach(p_text8_id, p_id);
-        document.reattach(p_text7_id, p_id);
-        document.reattach(p_text6_id, p_id);
-        document.reattach(p_text5_id, p_id);
-        document.reattach(p_text4_id, p_id);
-        document.reattach(p_text3_id, p_id);
-        document.reattach(p_text2_id, p_id);
-        document.reattach(p_comment_id, p_id);
-        document.reattach(p_text_id, p_id);
-        document.reattach(p_id, body_id);
-        document.reattach(title_text_id, title_id);
-        document.reattach(title_id, head_id);
-        document.reattach(head_id, html_id);
-        document.reattach(body_id, html_id);
-        document.reattach(html_id, root_id);
+        document.append(p_text9_id, p_id);
+        document.append(p_text8_id, p_id);
+        document.append(p_text7_id, p_id);
+        document.append(p_text6_id, p_id);
+        document.append(p_text5_id, p_id);
+        document.append(p_text4_id, p_id);
+        document.append(p_text3_id, p_id);
+        document.append(p_text2_id, p_id);
+        document.append(p_comment_id, p_id);
+        document.append(p_text_id, p_id);
+        document.append(p_id, body_id);
+        document.append(title_text_id, title_id);
+        document.append(title_id, head_id);
+        document.append(head_id, html_id);
+        document.append(body_id, html_id);
+        document.append(html_id, root_id);
 
         assert_eq!(format!("{}", document), r#"Document
         └─ <html>

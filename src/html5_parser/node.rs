@@ -17,7 +17,7 @@ pub enum NodeType {
 }
 
 // Different type of node data
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum NodeData {
     Document,
     Text { value: String },
@@ -35,6 +35,18 @@ pub struct Node {
     pub data: NodeData,             // actual data of the node
 }
 
+impl Clone for Node {
+    fn clone(&self) -> Self {
+        Node {
+            id: self.id,
+            parent: self.parent,
+            children: self.children.clone(),
+            name: self.name.clone(),
+            namespace: self.namespace.clone(),
+            data: self.data.clone(),
+        }
+    }
+}
 
 impl Node {
     // Create a new document node
@@ -170,7 +182,7 @@ mod test {
     fn test_new_element() {
         let mut attributes = HashMap::new();
         attributes.insert("id".to_string(), "test".to_string());
-        let node = Node::new_element("div", attributes, HTML_NAMESPACE);
+        let node = Node::new_element("div", attributes.clone(), HTML_NAMESPACE);
         assert_eq!(node.id, 0);
         assert_eq!(node.parent, None);
         assert_eq!(node.children, vec![]);
@@ -178,7 +190,7 @@ mod test {
         assert_eq!(node.namespace, Some(HTML_NAMESPACE.into()));
         assert_eq!(node.data, NodeData::Element {
             name: "div".to_string(),
-            attributes: attributes,
+            attributes: attributes.clone(),
         });
     }
 
@@ -288,7 +300,7 @@ mod test {
         });
         let mut attributes = HashMap::new();
         attributes.insert("id".to_string(), "test".to_string());
-        let node = Node::new_element("div", attributes, HTML_NAMESPACE);
+        let node = Node::new_element("div", attributes.clone(), HTML_NAMESPACE);
         assert_eq!(node.data, NodeData::Element {
             name: "div".to_string(),
             attributes: attributes,
@@ -299,7 +311,7 @@ mod test {
     fn test_type_of_node_data_element() {
         let mut attributes = HashMap::new();
         attributes.insert("id".to_string(), "test".to_string());
-        let node = Node::new_element("div", attributes, HTML_NAMESPACE);
+        let node = Node::new_element("div", attributes.clone(), HTML_NAMESPACE);
         assert_eq!(node.data, NodeData::Element {
             name: "div".to_string(),
             attributes: attributes,

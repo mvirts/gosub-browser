@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn test_quirks_mode() {
         let mut stream = InputStream::new();
-        let mut parser = Html5Parser::new(&mut stream);
+        let parser = Html5Parser::new(&mut stream);
 
         assert_eq!(parser.identify_quirks_mode(&None, None, None, false), QuirksMode::Quirks);
         assert_eq!(parser.identify_quirks_mode(&Some("html".to_string()), None, None, false), QuirksMode::NoQuirks);
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn test_quirks_mode_force() {
         let mut stream = InputStream::new();
-        let mut parser = Html5Parser::new(&mut stream);
+        let parser = Html5Parser::new(&mut stream);
 
         assert_eq!(parser.identify_quirks_mode(&Some("html".to_string()), None, None, true), QuirksMode::Quirks);
         assert_eq!(parser.identify_quirks_mode(&Some("html".to_string()), Some("-//W3O//DTD W3 HTML Strict 3.0//EN//".to_string()), None, true), QuirksMode::Quirks);
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn test_quirks_mode_sys() {
         let mut stream = InputStream::new();
-        let mut parser = Html5Parser::new(&mut stream);
+        let parser = Html5Parser::new(&mut stream);
 
         assert_eq!(parser.identify_quirks_mode(&Some("html".to_string()), Some("-//W3C//DTD HTML 4.0 Transitional//EN".to_string()), Some("http://www.w3.org/TR/html4/loose.dtd".to_string()), false), QuirksMode::Quirks);
         assert_eq!(parser.identify_quirks_mode(&Some("html".to_string()), Some("-//W3C//DTD HTML 4.01 Frameset//".to_string()), Some("http://www.w3.org/TR/html4/frameset.dtd".to_string()), false), QuirksMode::LimitedQuirks);
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn test_quirks_mode_sys_missing() {
         let mut stream = InputStream::new();
-        let mut parser = Html5Parser::new(&mut stream);
+        let parser = Html5Parser::new(&mut stream);
 
         assert_eq!(parser.identify_quirks_mode(&Some("html".to_string()), Some("-//W3C//DTD HTML 4.01 Frameset//".to_string()), None, false), QuirksMode::LimitedQuirks);
     }
