@@ -103,6 +103,13 @@ macro_rules! pop_until_any {
     };
 }
 
+// Remove the given node_id from the open elements stack
+macro_rules! open_elements_remove {
+    ($self:expr, $target_node_id: expr) => {
+        $self.open_elements.retain(|&node_id| node_id != $target_node_id);
+    };
+}
+
 // Pops the last element from the open elements, and panics if it is not $name
 macro_rules! pop_check {
     ($self:expr, $name:expr) => {
@@ -164,9 +171,19 @@ mod adoption_agency;
 // Active formatting elements, which could be a regular node(id), or a marker
 #[derive(PartialEq)]
 enum ActiveElement {
-    Node(usize),
+    NodeId(usize),
     Marker,
 }
+
+impl ActiveElement {
+    fn node_id(&self) -> Option<usize> {
+        match self {
+            ActiveElement::NodeId(id) => Some(*id),
+            _ => None,
+        }
+    }
+}
+
 
 // The main parser object
 pub struct Html5Parser<'a> {
@@ -189,10 +206,7 @@ pub struct Html5Parser<'a> {
     active_formatting_elements: Vec<ActiveElement>, // List of active formatting elements or markers
     is_fragment_case: bool,                         // Is the current parsing a fragment case
     document: Document,                             // A reference to the document we are parsing
-    error_logger: Rc<RefCell<ErrorLogger>>,         // Error logger
-}
-
-impl<'a> Html5Parser<'a> {
+    error_logger: Rc<RefCell<ErrorLogger>>,         // Error logger, which is shared with the tokenizer
 }
 
 // Defines the scopes for in_scope()
@@ -249,6 +263,8 @@ impl<'a> Html5Parser<'a> {
             if self.current_token.is_eof() {
                 break;
             }
+
+            self.display_stack(&self.open_elements);
 
             // println!("Token: {}", self.current_token);
 
@@ -623,7 +639,7 @@ impl<'a> Html5Parser<'a> {
                         }
 
                         pop_until!(self, "caption");
-                        self.clear_active_formatting_elements_until_marker();
+                        self.active_formatting_elements_clear_until_marker();
 
                         self.insertion_mode = InsertionMode::InTable;
                     }
@@ -731,7 +747,7 @@ impl<'a> Html5Parser<'a> {
                 InsertionMode::InTableBody => {
                     match &self.current_token {
                         Token::StartTagToken { name, .. } if name == "tr" => {
-                            self.clear_stack_back_to_table_context();
+                            self.clear_stack_back_to_table_body_context();
 
                             self.insert_html_element(&self.current_token.clone());
 
@@ -740,7 +756,7 @@ impl<'a> Html5Parser<'a> {
                         Token::StartTagToken { name, .. } if name == "th" || name == "td" => {
                             self.parse_error("th or td tag not allowed in in table body insertion mode");
 
-                            self.clear_stack_back_to_table_context();
+                            self.clear_stack_back_to_table_body_context();
 
                             let token = Token::StartTagToken { name: "tr".to_string(), is_self_closing: false, attributes: HashMap::new() };
                             self.insert_html_element(&token);
@@ -749,37 +765,37 @@ impl<'a> Html5Parser<'a> {
                             self.reprocess_token = true;
                         },
                         Token::StartTagToken { name, .. } if name == "tbody" || name == "tfoot" || name == "thead" => {
-                            if ! self.in_scope(name, Scope::Table) {
+                            if ! self.is_in_scope(name, Scope::Table) {
                                 self.parse_error("tbody, tfoot or thead tag not allowed in in table body insertion mode");
                                 // ignore token
                                 continue;
                             }
 
-                            self.clear_stack_back_to_table_context();
+                            self.clear_stack_back_to_table_body_context();
                             self.open_elements.pop();
 
                             self.insertion_mode = InsertionMode::InTable;
                         },
                         Token::StartTagToken { name, .. } if ["caption", "col", "colgroup", "tbody", "tfoot", "thead"].contains(&name.as_str()) => {
-                            if ! self.in_scope("tbody", Scope::Table) && ! self.in_scope("tfoot", Scope::Table) && ! self.in_scope("thead", Scope::Table) {
+                            if ! self.is_in_scope("tbody", Scope::Table) && ! self.is_in_scope("tfoot", Scope::Table) && ! self.is_in_scope("thead", Scope::Table) {
                                 self.parse_error("caption, col, colgroup, tbody, tfoot or thead tag not allowed in in table body insertion mode");
                                 // ignore token
                                 continue;
                             }
 
-                            self.clear_stack_back_to_table_context();
+                            self.clear_stack_back_to_table_body_context();
                             self.open_elements.pop();
 
                             self.insertion_mode = InsertionMode::InTable;
                             self.reprocess_token = true;
                         }
                         Token::EndTagToken { name, .. } if name == "table" => {
-                            if ! self.in_scope("tbody", Scope::Table) && ! self.in_scope("tfoot", Scope::Table) && ! self.in_scope("thead", Scope::Table) {
+                            if ! self.is_in_scope("tbody", Scope::Table) && ! self.is_in_scope("tfoot", Scope::Table) && ! self.is_in_scope("thead", Scope::Table) {
                                 self.parse_error("caption, col, colgroup, tbody, tfoot or thead tag not allowed in in table body insertion mode");
                                 continue;
                             }
 
-                            self.clear_stack_back_to_table_context();
+                            self.clear_stack_back_to_table_body_context();
                             self.open_elements.pop();
 
                             self.insertion_mode = InsertionMode::InTable;
@@ -803,10 +819,10 @@ impl<'a> Html5Parser<'a> {
                             self.insert_html_element(&self.current_token.clone());
 
                             self.insertion_mode = InsertionMode::InCell;
-                            self.add_marker();
+                            self.active_formatting_elements_push_marker();
                         },
                         Token::EndTagToken { name, .. } if name == "tr" => {
-                            if ! self.in_scope("tr", Scope::Table) {
+                            if ! self.is_in_scope("tr", Scope::Table) {
                                 self.parse_error("tr tag not allowed in in row insertion mode");
                                 // ignore token
                                 continue;
@@ -818,7 +834,7 @@ impl<'a> Html5Parser<'a> {
                             self.insertion_mode = InsertionMode::InTableBody;
                         }
                         Token::StartTagToken { name, .. } if ["caption", "col", "colgroup", "tbody", "tfoot", "thead", "tr"].contains(&name.as_str()) => {
-                            if ! self.in_scope("tr", Scope::Table) {
+                            if ! self.is_in_scope("tr", Scope::Table) {
                                 self.parse_error("caption, col, colgroup, tbody, tfoot or thead tag not allowed in in row insertion mode");
                                 // ignore token
                                 continue;
@@ -831,7 +847,7 @@ impl<'a> Html5Parser<'a> {
                             self.reprocess_token = true;
                         }
                         Token::EndTagToken { name, .. } if name == "table" => {
-                            if ! self.in_scope("tr", Scope::Table) {
+                            if ! self.is_in_scope("tr", Scope::Table) {
                                 self.parse_error("table tag not allowed in in row insertion mode");
                                 // ignore token
                                 continue;
@@ -844,13 +860,13 @@ impl<'a> Html5Parser<'a> {
                             self.reprocess_token = true;
                         }
                         Token::EndTagToken { name, .. } if name == "tbody" || name == "tfoot" || name == "thead" => {
-                            if ! self.in_scope(name, Scope::Table) {
+                            if ! self.is_in_scope(name, Scope::Table) {
                                 self.parse_error("tbody, tfoot or thead tag not allowed in in table body insertion mode");
                                 // ignore token
                                 continue;
                             }
 
-                            if ! self.in_scope("tr", Scope::Table) {
+                            if ! self.is_in_scope("tr", Scope::Table) {
                                 // ignore token
                                 continue;
                             }
@@ -875,7 +891,7 @@ impl<'a> Html5Parser<'a> {
                         Token::StartTagToken { name, .. } if name == "th" || name == "td" => {
                             let token_name = name.clone();
 
-                            if ! self.in_scope(name.as_str(), Scope::Table) {
+                            if ! self.is_in_scope(name.as_str(), Scope::Table) {
                                 self.parse_error("th or td tag not allowed in in cell insertion mode");
                                 // ignore token
                                 continue;
@@ -889,12 +905,12 @@ impl<'a> Html5Parser<'a> {
 
                             pop_until!(self, token_name);
 
-                            self.clear_active_formatting_elements_until_marker();
+                            self.active_formatting_elements_clear_until_marker();
 
                             self.insertion_mode = InsertionMode::InRow;
                         },
                         Token::StartTagToken { name, .. } if ["caption", "col", "colgroup", "tbody", "td", "tfoot", "th", "thead", "tr"].contains(&name.as_str()) => {
-                            if ! self.in_scope("td", Scope::Table) && ! self.in_scope("th", Scope::Table) {
+                            if ! self.is_in_scope("td", Scope::Table) && ! self.is_in_scope("th", Scope::Table) {
                                 self.parse_error("caption, col, colgroup, tbody, tfoot or thead tag not allowed in in cell insertion mode");
                                 // ignore token (fragment case?)
                                 continue;
@@ -907,8 +923,8 @@ impl<'a> Html5Parser<'a> {
                             self.parse_error("end tag not allowed in in cell insertion mode");
                             // ignore token
                         }
-                        Token::EndTagToken { name, .. } if name == "tbody" || name == "tfoot" || name == "thead" || name == "tr" => {
-                            if ! self.in_scope(name.as_str(), Scope::Table) {
+                        Token::EndTagToken { name, .. } if name == "table" || name == "tbody" || name == "tfoot" || name == "thead" || name == "tr" => {
+                            if ! self.is_in_scope(name.as_str(), Scope::Table) {
                                 self.parse_error("tbody, tfoot or thead tag not allowed in in table body insertion mode");
                                 // ignore token
                                 continue;
@@ -1000,7 +1016,7 @@ impl<'a> Html5Parser<'a> {
                             }
                         },
                         Token::EndTagToken { name, .. } if name == "select" => {
-                            if !self.in_scope("select", Scope::Select) {
+                            if !self.is_in_scope("select", Scope::Select) {
                                 self.parse_error("select end tag not allowed in in select insertion mode");
                                 // ignore token
                                 continue;
@@ -1012,7 +1028,7 @@ impl<'a> Html5Parser<'a> {
                         Token::StartTagToken { name, .. } if name == "select" => {
                             self.parse_error("select tag not allowed in in select insertion mode");
 
-                            if !self.in_scope("select", Scope::Select) {
+                            if !self.is_in_scope("select", Scope::Select) {
                                 // ignore token (fragment case?)
                                 continue;
                             }
@@ -1023,7 +1039,7 @@ impl<'a> Html5Parser<'a> {
                         Token::StartTagToken { name, .. } if name == "input" || name == "keygen" || name == "textarea" => {
                             self.parse_error("input, keygen or textarea tag not allowed in in select insertion mode");
 
-                            if !self.in_scope("select", Scope::Select) {
+                            if !self.is_in_scope("select", Scope::Select) {
                                 // ignore token (fragment case)
                                 continue;
                             }
@@ -1061,7 +1077,7 @@ impl<'a> Html5Parser<'a> {
                         Token::EndTagToken { name, .. } if name == "caption" || name == "table" || name == "tbody" || name == "tfoot" || name == "thead" || name == "tr" || name == "td" || name == "th" => {
                             self.parse_error("caption, table, tbody, tfoot, thead, tr, td or th tag not allowed in in select in table insertion mode");
 
-                            if !self.in_scope(name, Scope::Select) {
+                            if !self.is_in_scope(name, Scope::Select) {
                                 // ignore token
                                 continue;
                             }
@@ -1140,7 +1156,7 @@ impl<'a> Html5Parser<'a> {
                             self.parse_error("eof not allowed in in template insertion mode");
 
                             pop_until!(self, "template");
-                            self.clear_active_formatting_elements_until_marker();
+                            self.active_formatting_elements_clear_until_marker();
                             self.template_insertion_mode.pop();
                             self.reset_insertion_mode();
                             self.reprocess_token = true;
@@ -1330,7 +1346,7 @@ impl<'a> Html5Parser<'a> {
         (&self.document, self.error_logger.borrow().get_errors().clone())
     }
 
-    // Retrieve a list of all errors generated by the parser/tokenizer
+    // Retrieves a list of all errors generated by the parser/tokenizer
     pub fn get_parse_errors(&self) -> Vec<ParseError> {
         self.error_logger.borrow().get_errors().clone()
     }
@@ -1374,25 +1390,6 @@ impl<'a> Html5Parser<'a> {
 
     fn flush_pending_table_character_tokens(&self) {
         todo!()
-    }
-
-    // Clear the active formatting stack until we reach the first marker
-    fn clear_active_formatting_elements_until_marker(&mut self) {
-        loop {
-            let active_elem = self.active_formatting_elements.pop();
-            if active_elem.is_none() {
-                return;
-            }
-
-            if let ActiveElement::Marker = active_elem.unwrap() {
-                return;
-            }
-        }
-    }
-
-    // Adds a marker to the active formatting stack
-    fn add_marker(&mut self) {
-        self.active_formatting_elements.push(ActiveElement::Marker);
     }
 
     // This function will pop elements off the stack until it reaches the first element that matches
@@ -1520,6 +1517,16 @@ impl<'a> Html5Parser<'a> {
     // Pop all elements back to a table context
     fn clear_stack_back_to_table_context(&mut self) {
         while self.open_elements.len() > 0 {
+            if ["table", "template", "html"].contains(&current_node!(self).name.as_str()) {
+                return;
+            }
+            self.open_elements.pop();
+        }
+    }
+
+    // Pop all elements back to a table context
+    fn clear_stack_back_to_table_body_context(&mut self) {
+        while self.open_elements.len() > 0 {
             if ["tbody", "tfoot", "thead", "template", "html"].contains(&current_node!(self).name.as_str()) {
                 return;
             }
@@ -1539,7 +1546,7 @@ impl<'a> Html5Parser<'a> {
     }
 
     // Checks if the given element is in given scope
-    fn in_scope(&self, tag: &str, scope: Scope) -> bool {
+    fn is_in_scope(&self, tag: &str, scope: Scope) -> bool {
         let mut idx = self.open_elements.len() - 1;
         loop {
             let node = open_elements_get!(self, idx);
@@ -1587,15 +1594,15 @@ impl<'a> Html5Parser<'a> {
         let tag = current_node!(self).name.clone();
         if tag != "td" && tag != "th" {
             self.parse_error("current node should be td or th");
-            return;
         }
 
         pop_until_any!(self, ["td", "th"]);
 
-        self.clear_active_formatting_elements_until_marker();
+        self.active_formatting_elements_clear_until_marker();
         self.insertion_mode = InsertionMode::InRow;
     }
 
+    // Handle insertion mode "in_body"
     fn handle_in_body(&mut self) {
         let mut any_other_end_tag = false;
 
@@ -1634,11 +1641,6 @@ impl<'a> Html5Parser<'a> {
                     return;
                 }
 
-                if self.open_elements.is_empty() {
-                    // ignore token
-                    return;
-                }
-
                 // Add attributes to html element
                 if let NodeData::Element { attributes: node_attributes, .. } = &mut current_node_mut!(self).data {
                     for (key, value) in attributes {
@@ -1657,6 +1659,24 @@ impl<'a> Html5Parser<'a> {
             Token::StartTagToken { name, .. } if name == "body" => {
                 self.parse_error("body tag not allowed in in body insertion mode");
 
+                if self.open_elements.len() > 1 || open_elements_get!(self, 1).name != "body" {
+                    // ignore token
+                    return;
+                }
+
+                if open_elements_has!(self, "template") {
+                    // ignore token
+                    return;
+                }
+
+                self.frameset_ok = false;
+
+                // Add attributes to body element
+                // @TODO add body attributes
+            },
+            Token::StartTagToken { name, .. } if name == "frameset" => {
+                self.parse_error("frameset tag not allowed in in body insertion mode");
+
                 if self.open_elements.len() == 1 || open_elements_get!(self, 1).name != "body" {
                     // ignore token
                     return;
@@ -1667,16 +1687,15 @@ impl<'a> Html5Parser<'a> {
                     return;
                 }
 
-                // Remove second element from parent node if has obe
                 self.open_elements.remove(1);
 
-                // pop all notes from bottom stack, from the current node up to the html element
-                // insert html element for token
-                // switch insertion mode to inframeset
+                while current_node!(self).name != "html" {
+                    self.open_elements.pop();
+                }
+
+                self.insert_html_element(&self.current_token.clone());
+
                 self.insertion_mode = InsertionMode::InFrameset;
-            },
-            Token::StartTagToken { name, .. } if name == "frameset" => {
-                // parse error
             }
             Token::EofToken => {
                 if !self.template_insertion_mode.is_empty() {
@@ -1687,7 +1706,7 @@ impl<'a> Html5Parser<'a> {
                 }
             },
             Token::EndTagToken { name, .. } if name == "body" => {
-                if !self.in_scope("body", Scope::Regular) {
+                if !self.is_in_scope("body", Scope::Regular) {
                     self.parse_error("body end tag not in scope");
                     // ignore token
                     return;
@@ -1698,7 +1717,7 @@ impl<'a> Html5Parser<'a> {
                 self.insertion_mode = InsertionMode::AfterBody;
             },
             Token::EndTagToken { name, .. } if name == "html" => {
-                if !self.in_scope("body", Scope::Regular) {
+                if !self.is_in_scope("body", Scope::Regular) {
                     self.parse_error("body end tag not in scope");
                     // ignore token
                     return;
@@ -1710,14 +1729,26 @@ impl<'a> Html5Parser<'a> {
                 self.reprocess_token = true;
             },
             Token::StartTagToken { name, .. } if name == "address" || name == "article" || name == "aside" || name == "blockquote" || name == "center" || name == "details" || name == "dialog" || name == "dir" || name == "div" || name == "dl" || name == "fieldset" || name == "figcaption" || name == "figure" || name == "footer" || name == "header" || name == "hgroup" || name == "main" || name == "menu" || name == "nav" || name == "ol" || name == "p" || name == "section" || name == "summary" || name == "ul" => {
-                if self.in_scope("p", Scope::Button) {
+                if self.is_in_scope("p", Scope::Button) {
                     self.close_p_element();
                 }
 
                 self.insert_html_element(&self.current_token.clone());
             },
             Token::StartTagToken { name, .. } if name == "h1" || name == "h2" || name == "h3" || name == "h4" || name == "h5" || name == "h6" => {
-                if self.in_scope("p", Scope::Button) {
+                if self.is_in_scope("p", Scope::Button) {
+                    self.close_p_element();
+                }
+
+                if ["h1", "h2", "h3", "h4", "h5", "h6"].contains(&current_node!(self).name.as_str()) {
+                    self.parse_error("h1-h6 not allowed in in body insertion mode");
+                    self.open_elements.pop();
+                }
+
+                self.insert_html_element(&self.current_token.clone());
+            },
+            Token::StartTagToken { name, .. } if name == "pre" || name == "listing" => {
+                if self.is_in_scope("p", Scope::Button) {
                     self.close_p_element();
                 }
 
@@ -1734,7 +1765,7 @@ impl<'a> Html5Parser<'a> {
                         // ignore token
                     }
 
-                    if self.in_scope("p", Scope::Button) {
+                    if self.is_in_scope("p", Scope::Button) {
                         self.close_p_element();
                     }
                 }
@@ -1746,12 +1777,30 @@ impl<'a> Html5Parser<'a> {
             }
             Token::StartTagToken { name, .. } if name == "li" => {
             }
+            Token::StartTagToken { name, .. } if name == "dd" || name == "dt" => {
+            }
             Token::StartTagToken { name, .. } if name == "plaintext" => {
+                if self.is_in_scope("p", Scope::Button) {
+                    self.close_p_element();
+                }
+
+                self.insert_html_element(&self.current_token.clone());
+
+                self.tokenizer.state = State::PlaintextState;
             }
             Token::StartTagToken { name, .. } if name == "button" => {
+                if self.is_in_scope("button", Scope::Regular) {
+                    self.parse_error("button tag not allowed in in body insertion mode");
+                    self.generate_all_implied_end_tags(None, false);
+                    pop_until!(self, "button");
+                }
+
+                self.reconstruct_formatting();
+                self.insert_html_element(&self.current_token.clone());
+                self.frameset_ok = false;
             }
             Token::EndTagToken { name, .. } if name == "address" || name == "article" || name == "aside" || name == "blockquote" || name == "button" || name == "center" || name == "details" || name == "dialog" || name == "dir" || name == "div" || name == "dl" || name == "fieldset" || name == "figcaption" || name == "figure" || name == "footer" || name == "header" || name == "hgroup" || name == "listing" || name == "main" || name == "menu" || name == "nav" || name == "ol" || name == "pre" || name == "section" || name == "summary" || name == "ul" => {
-                if ! self.in_scope(name, Scope::Regular) {
+                if ! self.is_in_scope(name, Scope::Regular) {
                     self.parse_error("end tag not in scope");
                     // ignore token
                     return;
@@ -1772,7 +1821,7 @@ impl<'a> Html5Parser<'a> {
                     self.form_element = None;
 
 
-                    if node_id.is_none() || !self.in_scope(name, Scope::Regular) {
+                    if node_id.is_none() || !self.is_in_scope(name, Scope::Regular) {
                         self.parse_error("end tag not in scope");
                         // ignore token
                         return;
@@ -1790,7 +1839,7 @@ impl<'a> Html5Parser<'a> {
                         self.parse_error("end tag not at top of stack");
                     }
                 } else {
-                    if ! self.in_scope(name, Scope::Regular) {
+                    if ! self.is_in_scope(name, Scope::Regular) {
                         self.parse_error("end tag not in scope");
                         // ignore token
                         return;
@@ -1807,7 +1856,7 @@ impl<'a> Html5Parser<'a> {
                 }
             },
             Token::EndTagToken { name, .. } if name == "p" => {
-                if ! self.in_scope(name, Scope::Button) {
+                if ! self.is_in_scope(name, Scope::Button) {
                     self.parse_error("end tag not in scope");
 
                     self.insert_html_element(&self.current_token.clone());
@@ -1818,7 +1867,7 @@ impl<'a> Html5Parser<'a> {
                 self.close_p_element();
             },
             Token::EndTagToken { name, .. } if name == "li" => {
-                if ! self.in_scope(name, Scope::ListItem) {
+                if ! self.is_in_scope(name, Scope::ListItem) {
                     self.parse_error("end tag not in scope");
                     // ignore token
                     return;
@@ -1833,7 +1882,7 @@ impl<'a> Html5Parser<'a> {
                 pop_until!(self, *name);
             }
             Token::EndTagToken { name, .. } if name == "dd" || name == "dt" => {
-                if ! self.in_scope(name, Scope::Regular) {
+                if ! self.is_in_scope(name, Scope::Regular) {
                     self.parse_error("end tag not in scope");
                     // ignore token
                     return;
@@ -1848,12 +1897,12 @@ impl<'a> Html5Parser<'a> {
                 pop_until!(self, *name);
             }
             Token::EndTagToken { name, .. } if name == "h1" || name == "h2" || name == "h3" || name == "h4" || name == "h5" || name == "h6" => {
-                if ! self.in_scope("h1", Scope::Regular) ||
-                    ! self.in_scope("h2", Scope::Regular) ||
-                    ! self.in_scope("h3", Scope::Regular) ||
-                    ! self.in_scope("h4", Scope::Regular) ||
-                    ! self.in_scope("h5", Scope::Regular) ||
-                    ! self.in_scope("h6", Scope::Regular) {
+                if ! self.is_in_scope("h1", Scope::Regular) ||
+                    ! self.is_in_scope("h2", Scope::Regular) ||
+                    ! self.is_in_scope("h3", Scope::Regular) ||
+                    ! self.is_in_scope("h4", Scope::Regular) ||
+                    ! self.is_in_scope("h5", Scope::Regular) ||
+                    ! self.is_in_scope("h6", Scope::Regular) {
                     self.parse_error("end tag not in scope");
                     // ignore token
                     return;
@@ -1872,35 +1921,40 @@ impl<'a> Html5Parser<'a> {
                 any_other_end_tag = true;
             }
             Token::StartTagToken { name, .. } if name == "a" => {
-                if let Some((idx, _)) = self.active_formatting_elements.iter().enumerate().rev().find(|(_, elem)| elem == &&ActiveElement::Marker) {
-                    self.parse_error("marker not in active formatting elements");
-                    self.active_formatting_elements.remove(idx);
+                match self.active_formatting_elements_has_until_marker("a") {
+                    Some(node_id) => {
+                        self.parse_error("a tag in active formatting elements");
+                        self.run_adoption_agency(&self.current_token.clone());
 
-                    // @TODO: more stuff todo here
+                        // Remove from lists if not done already by the adoption agency
+                        open_elements_remove!(self, node_id);
+                        self.active_formatting_elements_remove(node_id);
+                    }
+                    _ => {},
                 }
 
                 self.reconstruct_formatting();
 
                 let node_id = self.insert_html_element(&self.current_token.clone());
-                self.active_formatting_elements.push(ActiveElement::Node(node_id));
+                self.active_formatting_elements_push(node_id);
             }
             Token::StartTagToken { name, .. } if name == "b" || name == "big" || name == "code" || name == "em" || name == "font" || name == "i" || name == "s" || name == "small" || name == "strike" || name == "strong" || name == "tt" || name == "u" => {
                 self.reconstruct_formatting();
 
                 let node_id = self.insert_html_element(&self.current_token.clone());
-                self.active_formatting_elements.push(ActiveElement::Node(node_id));
+                self.active_formatting_elements_push(node_id);
             }
             Token::StartTagToken { name, .. } if name == "nobr" => {
                 self.reconstruct_formatting();
 
-                if self.in_scope("nobr", Scope::Regular) {
+                if self.is_in_scope("nobr", Scope::Regular) {
                     self.parse_error("nobr tag in scope");
                     self.run_adoption_agency(&self.current_token.clone());
                     self.reconstruct_formatting();
                 }
 
                 let node_id = self.insert_html_element(&self.current_token.clone());
-                self.active_formatting_elements.push(ActiveElement::Node(node_id));
+                self.active_formatting_elements_push(node_id);
             }
             Token::EndTagToken { name, .. } if name == "a" || name == "b" || name == "big" || name == "code" || name == "em" || name == "font" || name == "i" || name == "nobr" || name == "s" || name == "small" || name == "strike" || name == "strong" || name == "tt" || name == "u" => {
                 self.run_adoption_agency(&self.current_token.clone());
@@ -1910,11 +1964,11 @@ impl<'a> Html5Parser<'a> {
 
                 self.insert_html_element(&self.current_token.clone());
 
-                self.add_marker();
+                self.active_formatting_elements_push_marker();
                 self.frameset_ok = false;
             }
             Token::EndTagToken { name, .. } if name == "applet" || name == "marquee" || name == "object" => {
-                if ! self.in_scope(name, Scope::Regular) {
+                if ! self.is_in_scope(name, Scope::Regular) {
                     self.parse_error("end tag not in scope");
                     // ignore token
                     return;
@@ -1927,10 +1981,10 @@ impl<'a> Html5Parser<'a> {
                 }
 
                 pop_until!(self, *name);
-                self.clear_active_formatting_elements_until_marker();
+                self.active_formatting_elements_clear_until_marker();
             }
             Token::StartTagToken { name, .. } if name == "table" => {
-                if self.document.quirks_mode != QuirksMode::Quirks && self.in_scope("p", Scope::Button) {
+                if self.document.quirks_mode != QuirksMode::Quirks && self.is_in_scope("p", Scope::Button) {
                     self.close_p_element();
                 }
 
@@ -1986,7 +2040,7 @@ impl<'a> Html5Parser<'a> {
                 acknowledge_closing_tag!(self, *is_self_closing);
             }
             Token::StartTagToken { name, is_self_closing, .. } if name == "hr" => {
-                if self.in_scope("p", Scope::Button) {
+                if self.is_in_scope("p", Scope::Button) {
                     self.close_p_element();
                 }
 
@@ -2018,7 +2072,7 @@ impl<'a> Html5Parser<'a> {
                 self.insertion_mode = InsertionMode::Text;
             }
             Token::StartTagToken { name, .. } if name == "xmp" => {
-                if self.in_scope("p", Scope::Button) {
+                if self.is_in_scope("p", Scope::Button) {
                     self.close_p_element();
                 }
 
@@ -2063,7 +2117,7 @@ impl<'a> Html5Parser<'a> {
                 self.document.add_node(node, current_node!(self).id);
             }
             Token::StartTagToken { name, .. } if name == "rb" || name == "rtc" => {
-                if self.in_scope("ruby", Scope::Regular) {
+                if self.is_in_scope("ruby", Scope::Regular) {
                     self.generate_all_implied_end_tags(None, false);
                 }
 
@@ -2075,7 +2129,7 @@ impl<'a> Html5Parser<'a> {
                 self.document.add_node(node, current_node!(self).id);
             }
             Token::StartTagToken { name, .. } if name == "rp" || name == "rt" => {
-                if self.in_scope("ruby", Scope::Regular) {
+                if self.is_in_scope("ruby", Scope::Regular) {
                     self.generate_all_implied_end_tags(Some("rtc"), false);
                 }
 
@@ -2138,6 +2192,7 @@ impl<'a> Html5Parser<'a> {
         }
     }
 
+    // Handle insertion mode "in_head"
     fn handle_in_head(&mut self) {
         let mut anything_else = false;
 
@@ -2194,7 +2249,7 @@ impl<'a> Html5Parser<'a> {
             }
             Token::StartTagToken { name, .. } if name == "template" => {
                 self.insert_html_element(&self.current_token.clone());
-                self.add_marker();
+                self.active_formatting_elements_push_marker();
                 self.frameset_ok = false;
                 self.insertion_mode = InsertionMode::InTemplate;
                 self.template_insertion_mode.push(InsertionMode::InTemplate);
@@ -2213,7 +2268,7 @@ impl<'a> Html5Parser<'a> {
                 }
 
                 pop_until!(self, "template");
-                self.clear_active_formatting_elements_until_marker();
+                self.active_formatting_elements_clear_until_marker();
                 self.template_insertion_mode.pop();
 
                 self.reset_insertion_mode();
@@ -2239,10 +2294,12 @@ impl<'a> Html5Parser<'a> {
         }
     }
 
+    // Handle insertion mode "in_template"
     fn handle_in_template(&mut self) {
         todo!()
     }
 
+    // Handle insertion mode "in_table"
     fn handle_in_table(&mut self) {
         let mut anything_else = false;
 
@@ -2263,7 +2320,7 @@ impl<'a> Html5Parser<'a> {
             }
             Token::StartTagToken { name, .. } if name == "caption" => {
                 self.clear_stack_back_to_table_context();
-                self.add_marker();
+                self.active_formatting_elements_push_marker();
                 self.insert_html_element(&self.current_token.clone());
                 self.insertion_mode = InsertionMode::InCaption;
             }
@@ -2370,62 +2427,161 @@ impl<'a> Html5Parser<'a> {
         }
     }
 
+    // Handle insertion mode "in_select"
     fn handle_in_select(&mut self) {
         todo!()
     }
 
-    fn reconstruct_formatting(&mut self) {
-        // 1.
-        if self.active_formatting_elements.is_empty() {
-            return;
+    // Returns true if the given tag if found in the active formatting elements list (until the first marker)
+    fn active_formatting_elements_has_until_marker(&self, tag: &str) -> Option<usize> {
+        if self.active_formatting_elements.len() == 0 {
+            return None;
         }
 
-        // 3.
-        let entry = self.active_formatting_elements.last().unwrap();
-
-        // 2.
-        match entry {
-            ActiveElement::Marker => return,
-            ActiveElement::Node(node_id) => {
-                let node = self.document.get_node_by_id(*node_id).unwrap();
-                if open_elements_has!(self, node.name) {
-                    return;
-                }
-            }
-        }
-
-        // 4. rewind:
-        let mut idx;
+        let mut idx = self.active_formatting_elements.len() - 1;
         loop {
-            idx = self.active_formatting_elements.len() - 1;
-            if idx == 0 {
-                // create element
-            }
-
-            idx -= 1;
-
-            match entry {
-                ActiveElement::Marker => break,
-                ActiveElement::Node(node_id) => {
-                    let node = self.document.get_node_by_id(*node_id).unwrap();
-                    if open_elements_has!(self, node.name) {
-                        break;
+            match self.active_formatting_elements[idx] {
+                ActiveElement::Marker => return None,
+                ActiveElement::NodeId(node_id) => {
+                    if self.document.get_node_by_id(node_id).expect("node_id").name == tag {
+                        return Some(node_id);
                     }
                 }
             }
+
+            if idx == 0 {
+                // Reached the beginning of the list
+                return None;
+            }
+
+            idx -= 1;
+        }
+    }
+
+    // Adds a marker to the active formatting stack
+    fn active_formatting_elements_push_marker(&mut self) {
+        self.active_formatting_elements.push(ActiveElement::Marker);
+    }
+
+    // Clear the active formatting stack until we reach the first marker
+    fn active_formatting_elements_clear_until_marker(&mut self) {
+        while let Some(active_elem) = self.active_formatting_elements.pop() {
+            if let ActiveElement::Marker = active_elem {
+                // Found the marker
+                return;
+            }
+        }
+    }
+
+    // Remove the given node_id from the active formatting elements list
+    fn active_formatting_elements_remove(&mut self, target_node_id: usize) {
+        self.active_formatting_elements.retain(|node_id| {
+            match node_id {
+                ActiveElement::NodeId(node_id) => {
+                    *node_id != target_node_id
+                },
+                _ => true,
+            }
+        });
+    }
+
+    // Push a node onto the active formatting stack, make sure only max 3 of them can be added (between markers)
+    fn active_formatting_elements_push(&mut self, node_id: usize) {
+        let mut idx = self.active_formatting_elements.len();
+        if idx == 0 {
+            self.active_formatting_elements.push(ActiveElement::NodeId(node_id));
+            return;
         }
 
-        // 7. advance
+        // Fetch the node we want to push, so we can compare
+        let element_node = self.document.get_node_by_id(node_id).expect("node id not found");
+
+        let mut found = 0;
         loop {
-            idx += 1;
-
-            // 8/9. Create
-            // replace shzzls
-
-            // 10. If entry for new element is not last entry, return to advance
-            if idx == self.active_formatting_elements.len() {
+            let active_elem = self.active_formatting_elements.get(idx - 1).expect("index out of bounds");
+            if let ActiveElement::Marker = active_elem {
+                // Don't continue after the last marker
                 break;
             }
+
+            // Fetch the node we want to compare with
+            let match_node = match active_elem {
+                ActiveElement::NodeId(node_id) => self.document.get_node_by_id(*node_id).expect("node id not found"),
+                ActiveElement::Marker => unreachable!(),
+            };
+            if match_node.matches_tag_and_attrs(element_node) {
+                // Noah's Ark clause: we only allow 3 (instead of 2) of each tag (between markers)
+                found += 1;
+                if found == 3 {
+                    // Remove the element from the list
+                    self.active_formatting_elements.remove(idx - 1);
+                    break;
+                }
+            }
+
+            if idx == 0 {
+                break;
+            }
+            idx -= 1;
+        }
+
+        self.active_formatting_elements.push(ActiveElement::NodeId(node_id));
+    }
+
+    fn reconstruct_formatting(&mut self) {
+        if self.active_formatting_elements.is_empty() {
+            return; // Nothing to reconstruct.
+        }
+
+        let mut entry_index = self.active_formatting_elements.len() - 1;
+
+        loop {
+            // Let entry be the last (most recently added) element in the list of active formatting elements.
+            let entry = &self.active_formatting_elements[entry_index];
+
+            // If it's a marker or in the stack of open elements, nothing to reconstruct.
+            if let ActiveElement::Marker = entry {
+                return;
+            }
+            if self.open_elements.contains(&entry.node_id().expect("node id not found")) {
+                return;
+            }
+
+            // Rewind
+            if entry_index == 0 {
+                break; // Go to 'create' step
+            }
+            entry_index -= 1;
+        }
+
+        loop {
+            // If we reach here, we're at the 'create' step.
+            entry_index += 1;
+            let current_entry = &self.active_formatting_elements[entry_index];
+
+            // Create new element for the token.
+            let new_element = self.create_new_element(/* the token for which entry was created */);
+            let active_element = ActiveElement::NodeId(new_element.id);
+
+            // Replace the entry with the new element.
+            self.active_formatting_elements[entry_index] = active_element;
+
+            // Check if it's the last in the list.
+            if entry_index == self.active_formatting_elements.len() - 1 {
+                break;
+            }
+        }
+    }
+
+    fn create_new_formatting_element(&mut self, idx: usize, node: &Node) {
+        match &node.data {
+            NodeData::Element { name, attributes } => {
+                let token = Token::StartTagToken { name: name.clone(), is_self_closing: false, attributes: attributes.clone() };
+                let node_id = self.insert_html_element(&token);
+
+                self.active_formatting_elements[idx] = ActiveElement::NodeId(node_id);
+            }
+            _ => {}
         }
     }
 
@@ -2529,12 +2685,24 @@ impl<'a> Html5Parser<'a> {
         return node_id;
     }
 
+    // Switch the parser and tokenizer to the RAWTEXT state
     fn parse_raw_data(&mut self) {
-        todo!()
+        self.insert_html_element(&self.current_token.clone());
+
+        self.tokenizer.state = State::RawTextState;
+
+        self.original_insertion_mode = self.insertion_mode;
+        self.insertion_mode = InsertionMode::Text;
     }
 
+    // Switch the parser and tokenizer to the RCDATA state
     fn parse_rcdata(&mut self) {
-        todo!()
+        self.insert_html_element(&self.current_token.clone());
+
+        self.tokenizer.state = State::RcDataState;
+
+        self.original_insertion_mode = self.insertion_mode;
+        self.insertion_mode = InsertionMode::Text;
     }
 
     fn adjusted_insert_location(&self, override_node: Option<&Node>) -> usize {
@@ -2577,4 +2745,12 @@ impl<'a> Html5Parser<'a> {
         return adjusted_insertion_location;
     }
 
+    fn display_stack(&self, stack: &Vec<usize>) {
+        println!("-- stack start --");
+        for node_id in stack {
+            let node = self.document.get_node_by_id(*node_id).unwrap();
+            println!("{}: {}", node.id, node.name);
+        }
+        println!("-- stack end --");
+    }
 }

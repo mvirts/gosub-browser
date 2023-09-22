@@ -36,7 +36,7 @@ fn main () -> io::Result<()> {
         failed: 0,
         failed_position: 0,
     };
-    
+
     for entry in fs::read_dir(dir + "/tree-construction")? {
         let entry = entry?;
         let path = entry.path();
@@ -54,7 +54,7 @@ fn main () -> io::Result<()> {
 
         let mut test_idx = 1;
         for test in tests {
-            // if test_idx == 3 {
+            // if test_idx == 23 {
                 run_tree_test(test_idx, &test, &mut results);
             // }
 
@@ -149,10 +149,16 @@ fn run_tree_test(test_idx: usize,test: &Test, results: &mut TestResults) {
     let mut parser = Html5Parser::new(&mut is);
     let (document, parse_errors) = parser.parse();
 
-    match_document_tree(&document, &test.document);
+    // Check the document tree, which counts as a single assertion
+    results.assertions += 1;
+    if match_document_tree(&document, &test.document) {
+        results.succeeded += 1;
+    } else {
+        results.failed += 1;
+    }
 
-    // if parse_errors.len() != test.errors.len() {
-    //     println!("❌ Unexpected errors found (wanted {}, got {}): ", test.errors.len(), parse_errors.len());
+    if parse_errors.len() != test.errors.len() {
+         println!("❌ Unexpected errors found (wanted {}, got {}): ", test.errors.len(), parse_errors.len());
     //     for want_err in &test.errors {
     //         println!("     * Want: '{}' at {}:{}", want_err.code, want_err.line, want_err.col);
     //     }
@@ -161,9 +167,9 @@ fn run_tree_test(test_idx: usize,test: &Test, results: &mut TestResults) {
     //     }
     //     results.assertions += 1;
     //     results.failed += 1;
-    // } else {
-    //     println!("✅ Found {} errors", parse_errors.len());
-    // }
+    } else {
+         println!("✅ Found {} errors", parse_errors.len());
+    }
     //
     // // Check each error messages
     // let mut idx = 0;
@@ -214,6 +220,8 @@ fn run_tree_test(test_idx: usize,test: &Test, results: &mut TestResults) {
         for line in &test.document {
             println!("{}", line);
         }
+
+        // exit(1);
     }
 
     println!("----------------------------------------");
@@ -233,32 +241,8 @@ pub struct Error {
     pub col: i64,
 }
 
-/**
--   Element nodes must be represented by a "`<`" then the *tag name
-    string* "`>`", and all the attributes must be given, sorted
-    lexicographically by UTF-16 code unit according to their *attribute
-    name string*, on subsequent lines, as if they were children of the
-    element node.
--   Attribute nodes must have the *attribute name string*, then an "="
-    sign, then the attribute value in double quotes (").
--   Text nodes must be the string, in double quotes. Newlines aren't
-    escaped.
--   Comments must be "`<`" then "`!-- `" then the data then "` -->`".
--   DOCTYPEs must be "`<!DOCTYPE `" then the name then if either of the
-    system id or public id is non-empty a space, public id in
-    double-quotes, another space an the system id in double-quotes, and
-    then in any case "`>`".
--   Processing instructions must be "`<?`", then the target, then a
-    space, then the data and then "`>`". (The HTML parser cannot emit
-    processing instructions, but scripts can, and the WebVTT to DOM
-    rules can emit them.)
--   Template contents are represented by the string "content" with the
-    children below it.
-**/
-
 fn match_document_tree(document: &Document, expected: &Vec<String>) -> bool {
-    match_node(0, -1, -1, document, expected);
-    true
+    match_node(0, -1, -1, document, expected).is_some()
 }
 
 fn match_node(node_idx: usize, expected_id: isize, indent: isize, document: &Document, expected: &Vec<String>) -> Option<usize> {
@@ -301,6 +285,7 @@ fn match_node(node_idx: usize, expected_id: isize, indent: isize, document: &Doc
     Some(next_expected_idx as usize)
 }
 
+#[allow(dead_code)]
 fn match_error(got_err: &Error, expected_err: &Error) -> ErrorResult {
     if got_err == expected_err {
         // Found an exact match
